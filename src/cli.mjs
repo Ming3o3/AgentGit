@@ -3,6 +3,7 @@ import { initRepository, EventStore } from './store.mjs';
 import fs from 'node:fs';
 import { normalizeCodexRecord } from './adapters/codex.mjs';
 import { createCheckpoint } from './git.mjs';
+import { scanCodexRollouts, watchCodexRollouts } from './watcher.mjs';
 
 function usage() {
   console.error(`Usage:
@@ -15,6 +16,7 @@ function usage() {
   agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged]
   agentgit ack --repo <repo> --agent <id> --event <event-id>
   agentgit checkpoint --repo <repo> --agent <id> --summary <text> [--task <id>] [--ref <name>] [--commit]
+  agentgit watch-codex --repo <repo> --dir <codex-sessions-dir> --agent <id> [--task <id>] [--interval <ms>] [--once]
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -101,6 +103,28 @@ try {
     try {
       print(createCheckpoint({ repo: options.repo, store, agentId: options.agent, summary: options.summary, taskId: options.task, sessionId: options.session, ref: options.ref, commit: options.commit === true }));
     } finally { store.close(); }
+  } else if (command === 'watch-codex') {
+    if (!options.repo || !options.dir || !options.agent) usage();
+    const store = new EventStore(options.repo);
+    const intervalMs = Number(options.interval ?? 1000);
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+    try {
+      if (options.once === true) {
+        print(scanCodexRollouts({ root: options.dir, store, agentId: options.agent, taskId: options.task }));
+      } else {
+        console.error(`agentgit: watching ${options.dir}`);
+        await watchCodexRollouts({ root: options.dir, store, agentId: options.agent, taskId: options.task, intervalMs, signal: controller.signal, onScan: (summary) => {
+          if (summary.imported || summary.skipped) console.error(`agentgit: imported=${summary.imported} skipped=${summary.skipped}`);
+        } });
+      }
+    } finally {
+      process.removeListener('SIGINT', stop);
+      process.removeListener('SIGTERM', stop);
+      store.close();
+    }
   } else usage();
 } catch (error) {
   console.error(`agentgit: ${error.message}`);
