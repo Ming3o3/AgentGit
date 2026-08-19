@@ -1,0 +1,3 @@
+.agentgit/
+node_modules/
+*.log

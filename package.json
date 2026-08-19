@@ -1,0 +1,19 @@
+{
+  "name": "agentgit",
+  "version": "0.1.0",
+  "description": "Local-first event history and collaboration bridge for coding agents",
+  "type": "module",
+  "bin": {
+    "agentgit": "src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/canonical-json.mjs && node --check src/store.mjs && node --check src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  }
+}
