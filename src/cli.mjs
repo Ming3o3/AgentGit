@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { normalizeCodexRecord } from './adapters/codex.mjs';
 import { createCheckpoint } from './git.mjs';
 import { scanCodexRollouts, watchCodexRollouts } from './watcher.mjs';
+import { codexMcpConfig } from './codex-config.mjs';
 
 function usage() {
   console.error(`Usage:
@@ -17,6 +18,7 @@ function usage() {
   agentgit ack --repo <repo> --agent <id> --event <event-id>
   agentgit checkpoint --repo <repo> --agent <id> --summary <text> [--task <id>] [--ref <name>] [--commit]
   agentgit watch-codex --repo <repo> --dir <codex-sessions-dir> --agent <id> [--task <id>] [--interval <ms>] [--once]
+  agentgit codex-config --repo <repo> --agent <id>
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -125,6 +127,9 @@ try {
       process.removeListener('SIGTERM', stop);
       store.close();
     }
+  } else if (command === 'codex-config') {
+    if (!options.repo || !options.agent) usage();
+    process.stdout.write(codexMcpConfig({ repo: options.repo, agentId: options.agent }));
   } else usage();
 } catch (error) {
   console.error(`agentgit: ${error.message}`);

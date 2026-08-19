@@ -2,14 +2,22 @@
   "name": "agentgit",
   "version": "0.1.0",
   "description": "Local-first event history and collaboration bridge for coding agents",
+  "license": "MIT",
   "type": "module",
+  "files": [
+    "src",
+    "skills",
+    ".codex-plugin",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "agentgit": "src/cli.mjs",
     "agentgit-mcp": "src/mcp-server.mjs"
   },
   "scripts": {
     "test": "node --test",
-    "lint": "node --check src/canonical-json.mjs && node --check src/store.mjs && node --check src/objects.mjs && node --check src/git.mjs && node --check src/watcher.mjs && node --check src/cli.mjs && node --check src/mcp-server.mjs && node --check src/adapters/codex.mjs"
+    "lint": "node --check src/canonical-json.mjs && node --check src/store.mjs && node --check src/objects.mjs && node --check src/git.mjs && node --check src/watcher.mjs && node --check src/codex-config.mjs && node --check src/cli.mjs && node --check src/mcp-server.mjs && node --check src/adapters/codex.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,20 +1,136 @@
 # AgentGit
 
-AgentGit is a local-first collaboration layer for existing coding agents. The
-first version stores immutable, hash-addressed events in SQLite. It does not
-replace an agent, Git, or the agent's native session files.
+AgentGit is a local-first collaboration layer for existing coding agents. It
+does not replace Codex, Claude Code, Git, or native session storage.
 
-## Quick start
-
-```sh
-npm install
-node src/cli.mjs init ./demo
-node src/cli.mjs emit --repo ./demo --agent planner --type task.created \
-  --payload '{"title":"Implement login"}' --ref task/login
-node src/cli.mjs emit --repo ./demo --agent coder --type message.sent \
-  --payload '{"text":"I started the implementation"}' --ref task/login
-node src/cli.mjs log --repo ./demo --ref task/login
+```text
+Agent-native session records ──> AgentGit importer ──> immutable event history
+MCP tools <───────────────────> inbox / acknowledgements / task history
+Git worktree ─────────────────> content-addressed checkpoint and diff
 ```
 
-An event is append-only. A ref is a mutable pointer to the latest event, which
-provides Git-like branch heads without rewriting history.
+AgentGit records only observable collaboration facts: explicit messages, tool
+calls and outputs exposed by the source agent, task events, Git checkpoints,
+and message-delivery state. It does not record hidden reasoning or tokens.
+
+## Install
+
+```sh
+git clone <your-agentgit-repository>
+cd AgentGit
+npm install
+npm test
+```
+
+The current implementation requires Node.js 20+ and uses SQLite locally.
+AgentGit writes all state to `<target-project>/.agentgit/`. During `init`, it
+adds `.agentgit/` to that repository's local `.git/info/exclude`, so plugin
+data is never staged by AgentGit checkpoints.
+
+## Initialize a target project
+
+Run AgentGit from its source checkout, pointing at the project that agents
+will collaborate on:
+
+```sh
+node src/cli.mjs init /absolute/path/to/project
+```
+
+## Connect Codex without replacing it
+
+Generate a project-scoped MCP server entry:
+
+```sh
+node src/cli.mjs codex-config \
+  --repo /absolute/path/to/project \
+  --agent coder
+```
+
+Paste the printed block into `/absolute/path/to/project/.codex/config.toml`.
+The configuration starts AgentGit as a local stdio MCP process; it does not
+wrap Codex, change its model, or intercept its terminal.
+
+The MCP tools are:
+
+- `read_inbox` and `acknowledge_message`
+- `send_message`
+- `get_event` and `task_history`
+- `create_checkpoint`
+
+The included Codex plugin skill at [`skills/agentgit/SKILL.md`](skills/agentgit/SKILL.md)
+describes the intended collaboration workflow once those tools are configured.
+
+## Observe Codex sessions
+
+Codex keeps explicit session entries in rollout JSONL files. Import a specific
+file once:
+
+```sh
+node src/cli.mjs import-codex \
+  --repo /absolute/path/to/project \
+  --file /absolute/path/to/rollout-123.jsonl \
+  --agent coder
+```
+
+Or run the non-invasive rollout watcher. It has a testable single-scan mode
+and otherwise polls safely from persisted byte cursors:
+
+```sh
+node src/cli.mjs watch-codex \
+  --repo /absolute/path/to/project \
+  --dir ~/.codex/sessions \
+  --agent coder
+```
+
+Only `rollout-*.jsonl` files are read. Every imported event retains its source
+path and byte offset, and re-scanning never duplicates already imported rows.
+
+## Communicate outside MCP
+
+The CLI provides the same durable communication protocol:
+
+```sh
+node src/cli.mjs send --repo /absolute/path/to/project \
+  --from planner --to coder,reviewer \
+  --subject "Login task" --text "Implement the login endpoint." \
+  --task task-login
+
+node src/cli.mjs inbox --repo /absolute/path/to/project --agent coder
+node src/cli.mjs ack --repo /absolute/path/to/project --agent coder --event evt_...
+```
+
+Messages are immutable `message.sent` events. Delivery records are separate,
+per-recipient mutable state: `pending`, `delivered`, and `acknowledged`.
+
+## Checkpoints and Git
+
+Record the current Git state without creating a commit:
+
+```sh
+node src/cli.mjs checkpoint \
+  --repo /absolute/path/to/project \
+  --agent coder --task task-login \
+  --summary "Login endpoint implemented and tested"
+```
+
+To make the stage a normal Git commit and then record its AgentGit checkpoint:
+
+```sh
+node src/cli.mjs checkpoint \
+  --repo /absolute/path/to/project \
+  --agent coder --task task-login \
+  --summary "feat: add login endpoint" --commit
+```
+
+A checkpoint saves branch, commit SHA, visible worktree status, and a
+content-addressed binary diff in `.agentgit/objects/`. Events remain
+append-only; refs and delivery state are the mutable projections.
+
+## Development verification
+
+```sh
+npm test
+npm run lint
+python3 /Users/ming/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
+npm pack --dry-run
+```

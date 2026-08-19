@@ -1,0 +1,20 @@
+{
+  "name": "agentgit",
+  "version": "0.1.0",
+  "description": "Local-first collaboration history and communication for coding agents.",
+  "author": {
+    "name": "AgentGit"
+  },
+  "license": "MIT",
+  "keywords": ["agents", "collaboration", "git", "mcp"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgentGit",
+    "shortDescription": "Track and coordinate coding agents locally.",
+    "longDescription": "AgentGit records observable agent actions, exchanges durable messages, and links results to Git checkpoints without replacing the underlying coding agent.",
+    "developerName": "AgentGit",
+    "category": "Productivity",
+    "capabilities": ["Local collaboration", "MCP workflow"],
+    "defaultPrompt": "Help me inspect and coordinate the AgentGit task history."
+  }
+}
