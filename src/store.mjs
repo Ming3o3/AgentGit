@@ -67,9 +67,20 @@ export function initRepository(repo) {
       PRIMARY KEY (source_key, source_offset),
       FOREIGN KEY (event_id) REFERENCES events(id)
     );
+    CREATE TABLE IF NOT EXISTS deliveries (
+      event_id TEXT NOT NULL,
+      recipient_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'acknowledged')),
+      created_at TEXT NOT NULL,
+      delivered_at TEXT,
+      acknowledged_at TEXT,
+      PRIMARY KEY (event_id, recipient_id),
+      FOREIGN KEY (event_id) REFERENCES events(id)
+    );
     CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, created_at);
     CREATE INDEX IF NOT EXISTS events_agent_time ON events(agent_id, created_at);
     CREATE INDEX IF NOT EXISTS events_type_time ON events(type, created_at);
+    CREATE INDEX IF NOT EXISTS deliveries_recipient_status ON deliveries(recipient_id, status, created_at);
     CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_update
       BEFORE UPDATE ON events BEGIN
         SELECT RAISE(ABORT, 'events are immutable');
@@ -142,6 +153,88 @@ export class EventStore {
       return { imported, skipped, offset };
     });
     return transaction();
+  }
+
+  sendMessage({ from, to, text, subject = null, taskId = null, sessionId = null, ref = null, references = [] }) {
+    const recipients = Array.isArray(to) ? to : [to];
+    const cleanedRecipients = [...new Set(recipients.map((item) => String(item).trim()).filter(Boolean))];
+    if (cleanedRecipients.length === 0) throw new Error('at least one recipient is required');
+    if (typeof text !== 'string' || !text.trim()) throw new Error('message text is required');
+    if (!Array.isArray(references)) throw new Error('references must be an array');
+    const transaction = this.database.transaction(() => {
+      const event = this.#insertEvent({
+        agentId: from,
+        type: 'message.sent',
+        taskId,
+        sessionId,
+        ref,
+        payload: { to: cleanedRecipients, subject, text, references },
+      });
+      const insert = this.database.prepare(`
+        INSERT INTO deliveries(event_id, recipient_id, status, created_at)
+        VALUES (?, ?, 'pending', ?)
+      `);
+      for (const recipient of cleanedRecipients) insert.run(event.id, recipient, event.createdAt);
+      return event;
+    });
+    return transaction();
+  }
+
+  inbox({ agentId, status = null, limit = 100 } = {}) {
+    if (!agentId?.trim()) throw new Error('agentId is required');
+    const values = [agentId];
+    const condition = status ? 'AND d.status = ?' : '';
+    if (status) values.push(status);
+    values.push(limit);
+    return this.database.prepare(`
+      SELECT e.*, d.recipient_id, d.status AS delivery_status, d.created_at AS delivery_created_at,
+        d.delivered_at, d.acknowledged_at
+      FROM deliveries d JOIN events e ON e.id = d.event_id
+      WHERE d.recipient_id = ? ${condition}
+      ORDER BY e.created_at ASC LIMIT ?
+    `).all(...values).map((row) => ({
+      ...this.#hydrate(row),
+      delivery: {
+        recipientId: row.recipient_id,
+        status: row.delivery_status,
+        createdAt: row.delivery_created_at,
+        deliveredAt: row.delivered_at,
+        acknowledgedAt: row.acknowledged_at,
+      },
+    }));
+  }
+
+  markDelivered(eventId, recipientId) {
+    const result = this.database.prepare(`
+      UPDATE deliveries SET status = CASE WHEN status = 'pending' THEN 'delivered' ELSE status END,
+        delivered_at = CASE WHEN delivered_at IS NULL THEN ? ELSE delivered_at END
+      WHERE event_id = ? AND recipient_id = ?
+    `).run(now(), eventId, recipientId);
+    if (result.changes === 0) throw new Error(`delivery does not exist: ${eventId} -> ${recipientId}`);
+    return this.delivery(eventId, recipientId);
+  }
+
+  acknowledge(eventId, recipientId) {
+    const result = this.database.prepare(`
+      UPDATE deliveries SET status = 'acknowledged', delivered_at = COALESCE(delivered_at, ?),
+        acknowledged_at = COALESCE(acknowledged_at, ?)
+      WHERE event_id = ? AND recipient_id = ?
+    `).run(now(), now(), eventId, recipientId);
+    if (result.changes === 0) throw new Error(`delivery does not exist: ${eventId} -> ${recipientId}`);
+    return this.delivery(eventId, recipientId);
+  }
+
+  delivery(eventId, recipientId) {
+    const row = this.database.prepare('SELECT * FROM deliveries WHERE event_id = ? AND recipient_id = ?')
+      .get(eventId, recipientId);
+    return row ? {
+      eventId: row.event_id,
+      recipientId: row.recipient_id,
+      status: row.status,
+      createdAt: row.created_at,
+      deliveredAt: row.delivered_at,
+      acknowledgedAt: row.acknowledged_at,
+    } : null;
   }
 
   #insertEvent(input) {

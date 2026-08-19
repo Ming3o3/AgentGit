@@ -10,6 +10,9 @@ function usage() {
   agentgit log --repo <repo> [--ref <name>] [--task <id>] [--agent <id>] [--type <type>]
   agentgit show --repo <repo> <event-id>
   agentgit import-codex --repo <repo> --file <rollout.jsonl> --agent <id> [--task <id>] [--session <id>] [--ref <name>]
+  agentgit send --repo <repo> --from <id> --to <id[,id...]> --text <message> [--subject <text>]
+  agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged]
+  agentgit ack --repo <repo> --agent <id> --event <event-id>
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -74,6 +77,22 @@ try {
     try {
       print(store.importJsonl({ filePath: options.file, agentId: options.agent, taskId: options.task, sessionId: options.session, ref: options.ref, adapter: normalizeCodexRecord }));
     } finally { store.close(); }
+  } else if (command === 'send') {
+    if (!options.repo || !options.from || !options.to || !options.text) usage();
+    const store = new EventStore(options.repo);
+    try {
+      print(store.sendMessage({ from: options.from, to: String(options.to).split(','), text: options.text, subject: options.subject ?? null, taskId: options.task, sessionId: options.session, ref: options.ref }));
+    } finally { store.close(); }
+  } else if (command === 'inbox') {
+    if (!options.repo || !options.agent) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.inbox({ agentId: options.agent, status: options.status ?? null, limit: Number(options.limit ?? 100) })); }
+    finally { store.close(); }
+  } else if (command === 'ack') {
+    if (!options.repo || !options.agent || !options.event) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.acknowledge(options.event, options.agent)); }
+    finally { store.close(); }
   } else usage();
 } catch (error) {
   console.error(`agentgit: ${error.message}`);
