@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod';
 import { EventStore } from './store.mjs';
+import { createCheckpoint } from './git.mjs';
 
 function parseArgs(argv) {
   const result = {};
@@ -80,6 +81,19 @@ server.registerTool('task_history', {
     limit: z.number().int().min(1).max(1000).optional(),
   },
 }, async ({ task_id: taskId, limit = 100 }) => result(store.list({ taskId, limit })));
+
+server.registerTool('create_checkpoint', {
+  title: 'Create Git checkpoint',
+  description: 'Record the current Git branch, commit, status, and a content-addressed diff. Set commit=true only when the current worktree should be committed with this summary.',
+  inputSchema: {
+    summary: z.string().min(1).describe('Concise description of the completed work'),
+    task_id: z.string().nullable().optional(),
+    commit: z.boolean().optional().describe('Stage and commit current worktree changes before recording'),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false },
+}, async ({ summary, task_id: taskId = null, commit = false }) => result(createCheckpoint({
+  repo, store, agentId, summary, taskId, commit,
+})));
 
 const transport = new StdioServerTransport();
 const shutdown = async () => {

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from './canonical-json.mjs';
 
@@ -93,7 +94,27 @@ export function initRepository(repo) {
       ON CONFLICT(key) DO UPDATE SET value=excluded.value;
   `);
   database.close();
+  ensureGitExcludesState(root);
   return { repo: root, database: path.join(directory, 'events.db') };
+}
+
+function ensureGitExcludesState(root) {
+  let excludePath;
+  try {
+    excludePath = execFileSync('git', ['-C', root, 'rev-parse', '--git-path', 'info/exclude'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return;
+  }
+  if (!path.isAbsolute(excludePath)) excludePath = path.resolve(root, excludePath);
+  fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+  const current = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
+  const lines = current.split(/\r?\n/).map((line) => line.trim());
+  if (!lines.includes('.agentgit/')) {
+    fs.appendFileSync(excludePath, `${current && !current.endsWith('\n') ? '\n' : ''}.agentgit/\n`);
+  }
 }
 
 export class EventStore {

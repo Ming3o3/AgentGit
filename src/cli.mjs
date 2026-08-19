@@ -2,6 +2,7 @@
 import { initRepository, EventStore } from './store.mjs';
 import fs from 'node:fs';
 import { normalizeCodexRecord } from './adapters/codex.mjs';
+import { createCheckpoint } from './git.mjs';
 
 function usage() {
   console.error(`Usage:
@@ -13,6 +14,7 @@ function usage() {
   agentgit send --repo <repo> --from <id> --to <id[,id...]> --text <message> [--subject <text>]
   agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged]
   agentgit ack --repo <repo> --agent <id> --event <event-id>
+  agentgit checkpoint --repo <repo> --agent <id> --summary <text> [--task <id>] [--ref <name>] [--commit]
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -93,6 +95,12 @@ try {
     const store = new EventStore(options.repo);
     try { print(store.acknowledge(options.event, options.agent)); }
     finally { store.close(); }
+  } else if (command === 'checkpoint') {
+    if (!options.repo || !options.agent || !options.summary) usage();
+    const store = new EventStore(options.repo);
+    try {
+      print(createCheckpoint({ repo: options.repo, store, agentId: options.agent, summary: options.summary, taskId: options.task, sessionId: options.session, ref: options.ref, commit: options.commit === true }));
+    } finally { store.close(); }
   } else usage();
 } catch (error) {
   console.error(`agentgit: ${error.message}`);
