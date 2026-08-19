@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { initRepository, EventStore } from './store.mjs';
+import fs from 'node:fs';
+import { normalizeCodexRecord } from './adapters/codex.mjs';
 
 function usage() {
   console.error(`Usage:
@@ -7,6 +9,7 @@ function usage() {
   agentgit emit --repo <repo> --agent <id> --type <type> --payload <json> [--ref <name>]
   agentgit log --repo <repo> [--ref <name>] [--task <id>] [--agent <id>] [--type <type>]
   agentgit show --repo <repo> <event-id>
+  agentgit import-codex --repo <repo> --file <rollout.jsonl> --agent <id> [--task <id>] [--session <id>] [--ref <name>]
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -63,6 +66,13 @@ try {
       const result = store.verify(options._[0]);
       print(result);
       if (!result.valid) process.exitCode = 1;
+    } finally { store.close(); }
+  } else if (command === 'import-codex') {
+    if (!options.repo || !options.file || !options.agent) usage();
+    if (!fs.existsSync(options.file)) throw new Error(`file does not exist: ${options.file}`);
+    const store = new EventStore(options.repo);
+    try {
+      print(store.importJsonl({ filePath: options.file, agentId: options.agent, taskId: options.task, sessionId: options.session, ref: options.ref, adapter: normalizeCodexRecord }));
     } finally { store.close(); }
   } else usage();
 } catch (error) {

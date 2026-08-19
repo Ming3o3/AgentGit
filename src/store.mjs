@@ -54,6 +54,19 @@ export function initRepository(repo) {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (event_id) REFERENCES events(id)
     );
+    CREATE TABLE IF NOT EXISTS ingest_cursors (
+      source_key TEXT PRIMARY KEY,
+      file_path TEXT NOT NULL,
+      byte_offset INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS source_events (
+      source_key TEXT NOT NULL,
+      source_offset INTEGER NOT NULL,
+      event_id TEXT NOT NULL,
+      PRIMARY KEY (source_key, source_offset),
+      FOREIGN KEY (event_id) REFERENCES events(id)
+    );
     CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, created_at);
     CREATE INDEX IF NOT EXISTS events_agent_time ON events(agent_id, created_at);
     CREATE INDEX IF NOT EXISTS events_type_time ON events(type, created_at);
@@ -85,6 +98,53 @@ export class EventStore {
   }
 
   append(input) {
+    const transaction = this.database.transaction(() => this.#insertEvent(input));
+    return transaction();
+  }
+
+  importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path.resolve(filePath)}`, adapter }) {
+    const absolutePath = path.resolve(filePath);
+    const currentSize = fs.statSync(absolutePath).size;
+    const cursor = this.database.prepare('SELECT byte_offset FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
+    const startOffset = cursor && cursor.byte_offset <= currentSize ? cursor.byte_offset : 0;
+    const bytes = fs.readFileSync(absolutePath);
+    const completeBytes = bytes.subarray(startOffset, bytes.lastIndexOf(0x0a, bytes.length - 1) + 1);
+    if (completeBytes.length === 0) return { imported: 0, skipped: 0, offset: startOffset };
+    const transaction = this.database.transaction(() => {
+      let imported = 0;
+      let skipped = 0;
+      let offset = startOffset;
+      for (const lineBytes of completeBytes.toString('utf8').split('\n').slice(0, -1)) {
+        const lineStart = offset;
+        offset += Buffer.byteLength(`${lineBytes}\n`);
+        let raw;
+        try { raw = JSON.parse(lineBytes); } catch { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset); continue; }
+        const normalized = adapter(raw);
+        if (!normalized) { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset); continue; }
+        this.#insertEvent({
+          agentId,
+          type: normalized.type,
+          payload: normalized.payload,
+          taskId,
+          sessionId,
+          ref,
+          source: {
+            adapter: normalized.adapter ?? 'jsonl',
+            path: absolutePath,
+            byteOffset: lineStart,
+            rawType: raw.type ?? null,
+            payloadType: raw.payload?.type ?? null,
+          },
+          ingest: { sourceKey, sourceOffset: lineStart, filePath: absolutePath, nextOffset: offset },
+        });
+        imported += 1;
+      }
+      return { imported, skipped, offset };
+    });
+    return transaction();
+  }
+
+  #insertEvent(input) {
     const {
       agentId,
       type,
@@ -103,7 +163,16 @@ export class EventStore {
       throw new Error('payload must be a JSON object');
     }
 
-    const transaction = this.database.transaction(() => {
+    const { ingest = null } = input;
+    if (ingest) {
+      const existing = this.database.prepare('SELECT event_id FROM source_events WHERE source_key = ? AND source_offset = ?')
+        .get(ingest.sourceKey, ingest.sourceOffset);
+      if (existing) {
+        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset);
+        return this.get(existing.event_id);
+      }
+    }
+    {
       const refRow = ref
         ? this.database.prepare('SELECT event_id FROM refs WHERE name = ?').get(ref)
         : null;
@@ -154,6 +223,11 @@ export class EventStore {
           ON CONFLICT(name) DO UPDATE SET event_id=excluded.event_id, updated_at=excluded.updated_at
         `).run(ref, event.id, now());
       }
+      if (ingest) {
+        this.database.prepare('INSERT INTO source_events(source_key, source_offset, event_id) VALUES (?, ?, ?)')
+          .run(ingest.sourceKey, ingest.sourceOffset, event.id);
+        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset);
+      }
       return {
         id: event.id,
         taskId: event.task_id,
@@ -167,8 +241,15 @@ export class EventStore {
         createdAt: event.created_at,
         contentHash,
       };
-    });
-    return transaction();
+    }
+  }
+
+  #advanceCursor(sourceKey, filePath, byteOffset) {
+    this.database.prepare(`
+      INSERT INTO ingest_cursors(source_key, file_path, byte_offset, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(source_key) DO UPDATE SET file_path=excluded.file_path,
+        byte_offset=excluded.byte_offset, updated_at=excluded.updated_at
+    `).run(sourceKey, filePath, byteOffset, now());
   }
 
   get(eventId) {
