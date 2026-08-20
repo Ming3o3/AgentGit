@@ -19,6 +19,10 @@ function usage() {
   agentgit checkpoint --repo <repo> --agent <id> --summary <text> [--task <id>] [--ref <name>] [--commit]
   agentgit watch-codex --repo <repo> --dir <codex-sessions-dir> --agent <id> [--task <id>] [--interval <ms>] [--once]
   agentgit codex-config --repo <repo> --agent <id>
+  agentgit task-create --repo <repo> --agent <id> --title <text> [--description <text>] [--priority low|normal|high|urgent]
+  agentgit task-assign --repo <repo> --agent <id> --task <id> --to <agent-id> [--note <text>]
+  agentgit task-status --repo <repo> --agent <id> --task <id> --status <status> [--summary <text>]
+  agentgit tasks --repo <repo> [--agent <id>] [--status <status>]
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -29,7 +33,7 @@ function args(argv) {
     const token = argv[i];
     if (!token.startsWith('--')) { result._.push(token); continue; }
     const key = token.slice(2).replaceAll('-', '_');
-    result[key] = argv[i + 1]?.startsWith('--') ? true : argv[++i];
+    result[key] = i + 1 >= argv.length || argv[i + 1].startsWith('--') ? true : argv[++i];
   }
   return result;
 }
@@ -130,6 +134,26 @@ try {
   } else if (command === 'codex-config') {
     if (!options.repo || !options.agent) usage();
     process.stdout.write(codexMcpConfig({ repo: options.repo, agentId: options.agent }));
+  } else if (command === 'task-create') {
+    if (!options.repo || !options.agent || !options.title) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.createTask({ createdBy: options.agent, title: options.title, description: options.description ?? '', priority: options.priority ?? 'normal', sessionId: options.session ?? null })); }
+    finally { store.close(); }
+  } else if (command === 'task-assign') {
+    if (!options.repo || !options.agent || !options.task || !options.to) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.assignTask({ taskId: options.task, assignedBy: options.agent, assigneeId: options.to, note: options.note ?? null })); }
+    finally { store.close(); }
+  } else if (command === 'task-status') {
+    if (!options.repo || !options.agent || !options.task || !options.status) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.updateTaskStatus({ taskId: options.task, updatedBy: options.agent, status: options.status, summary: options.summary ?? null })); }
+    finally { store.close(); }
+  } else if (command === 'tasks') {
+    if (!options.repo) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.listTasks({ assigneeId: options.agent ?? null, status: options.status ?? null, limit: Number(options.limit ?? 100) })); }
+    finally { store.close(); }
   } else usage();
 } catch (error) {
   console.error(`agentgit: ${error.message}`);

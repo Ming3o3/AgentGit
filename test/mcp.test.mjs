@@ -25,7 +25,10 @@ test('exposes durable messaging through MCP stdio', async () => {
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name), ['send_message', 'read_inbox', 'acknowledge_message', 'get_event', 'task_history', 'create_checkpoint']);
+    assert.deepEqual(tools.tools.map((tool) => tool.name), [
+      'send_message', 'read_inbox', 'acknowledge_message', 'get_event', 'task_history', 'create_checkpoint',
+      'create_task', 'assign_task', 'update_task_status', 'list_tasks',
+    ]);
     const sent = await client.callTool({ name: 'send_message', arguments: { to: ['reviewer'], text: 'Please review checkpoint c1', task_id: 'task-1', references: ['checkpoint:c1'] } });
     const message = JSON.parse(sent.content[0].text);
     assert.equal(message.agentId, 'coder');
@@ -34,6 +37,13 @@ test('exposes durable messaging through MCP stdio', async () => {
     assert.equal(JSON.parse(history.content[0].text)[0].type, 'message.sent');
     const inbox = await client.callTool({ name: 'read_inbox', arguments: {} });
     assert.equal(JSON.parse(inbox.content[0].text).length, 0);
+    const taskResult = await client.callTool({ name: 'create_task', arguments: { title: 'Review authentication', priority: 'high' } });
+    const task = JSON.parse(taskResult.content[0].text).task;
+    assert.equal(task.status, 'open');
+    await client.callTool({ name: 'assign_task', arguments: { task_id: task.id, assignee_id: 'reviewer' } });
+    await client.callTool({ name: 'update_task_status', arguments: { task_id: task.id, status: 'in_progress' } });
+    const tasksResult = await client.callTool({ name: 'list_tasks', arguments: { status: 'in_progress' } });
+    assert.equal(JSON.parse(tasksResult.content[0].text)[0].id, task.id);
     await ackClient.connect(ackTransport);
     const reviewerInbox = await ackClient.callTool({ name: 'read_inbox', arguments: {} });
     const received = JSON.parse(reviewerInbox.content[0].text)[0];

@@ -70,7 +70,7 @@ test('supports filtered event queries', () => {
   const repo = tempRepo();
   initRepository(repo);
   const store = new EventStore(repo);
-  store.append({ agentId: 'planner', type: 'task.created', payload: {}, taskId: 'task-1' });
+  store.append({ agentId: 'planner', type: 'task.created', payload: { title: 'Plan API' }, taskId: 'task-1' });
   store.append({ agentId: 'coder', type: 'tool.completed', payload: {}, taskId: 'task-1' });
   store.append({ agentId: 'reviewer', type: 'review.requested', payload: {}, taskId: 'task-2' });
   assert.equal(store.list({ taskId: 'task-1' }).length, 2);

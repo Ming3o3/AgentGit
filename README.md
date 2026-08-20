@@ -102,6 +102,38 @@ node src/cli.mjs ack --repo /absolute/path/to/project --agent coder --event evt_
 Messages are immutable `message.sent` events. Delivery records are separate,
 per-recipient mutable state: `pending`, `delivered`, and `acknowledged`.
 
+## Tasks
+
+Tasks are event-sourced. The immutable history uses `task.created`,
+`task.assigned`, and `task.status_changed`; the `tasks` SQLite table is a
+rebuildable current-state projection. Allowed lifecycle transitions are:
+
+```text
+open -> assigned -> in_progress -> completed
+                       |
+                       v
+                    blocked -> in_progress
+```
+
+`cancelled` is available before completion, while `completed` and `cancelled`
+are terminal. Create and route a task through the CLI:
+
+```sh
+node src/cli.mjs task-create --repo /absolute/path/to/project \
+  --agent planner --title "Implement login" --priority high
+
+node src/cli.mjs task-assign --repo /absolute/path/to/project \
+  --agent planner --task task_... --to coder
+
+node src/cli.mjs task-status --repo /absolute/path/to/project \
+  --agent coder --task task_... --status in_progress
+
+node src/cli.mjs tasks --repo /absolute/path/to/project --agent coder
+```
+
+The same operations are available through MCP as `create_task`, `assign_task`,
+`update_task_status`, and `list_tasks`.
+
 ## Checkpoints and Git
 
 Record the current Git state without creating a commit:

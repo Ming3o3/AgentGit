@@ -7,6 +7,16 @@ import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from './canonical-json.mjs';
 
 const SCHEMA_VERSION = 1;
+const TASK_STATUSES = new Set(['open', 'assigned', 'in_progress', 'blocked', 'completed', 'cancelled']);
+const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const TASK_TRANSITIONS = {
+  open: new Set(['assigned', 'in_progress', 'blocked', 'cancelled']),
+  assigned: new Set(['in_progress', 'blocked', 'cancelled']),
+  in_progress: new Set(['blocked', 'completed', 'cancelled']),
+  blocked: new Set(['in_progress', 'cancelled']),
+  completed: new Set(),
+  cancelled: new Set(),
+};
 
 function now() {
   return new Date().toISOString();
@@ -79,10 +89,28 @@ export function initRepository(repo) {
       PRIMARY KEY (event_id, recipient_id),
       FOREIGN KEY (event_id) REFERENCES events(id)
     );
+    CREATE TABLE IF NOT EXISTS tasks (
+      task_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      priority TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      assignee_id TEXT,
+      blocked_reason TEXT,
+      created_event_id TEXT NOT NULL,
+      updated_event_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (created_event_id) REFERENCES events(id),
+      FOREIGN KEY (updated_event_id) REFERENCES events(id)
+    );
     CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, created_at);
     CREATE INDEX IF NOT EXISTS events_agent_time ON events(agent_id, created_at);
     CREATE INDEX IF NOT EXISTS events_type_time ON events(type, created_at);
     CREATE INDEX IF NOT EXISTS deliveries_recipient_status ON deliveries(recipient_id, status, created_at);
+    CREATE INDEX IF NOT EXISTS tasks_assignee_status ON tasks(assignee_id, status, updated_at);
     CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_update
       BEFORE UPDATE ON events BEGIN
         SELECT RAISE(ABORT, 'events are immutable');
@@ -132,6 +160,96 @@ export class EventStore {
 
   append(input) {
     const transaction = this.database.transaction(() => this.#insertEvent(input));
+    return transaction();
+  }
+
+  createTask({ createdBy, title, description = '', priority = 'normal', sessionId = null }) {
+    if (!createdBy?.trim()) throw new Error('createdBy is required');
+    if (typeof title !== 'string' || !title.trim()) throw new Error('task title is required');
+    if (typeof description !== 'string') throw new Error('task description must be a string');
+    if (!TASK_PRIORITIES.has(priority)) throw new Error(`invalid task priority: ${priority}`);
+    const taskId = `task_${crypto.randomUUID()}`;
+    const event = this.append({
+      agentId: createdBy,
+      type: 'task.created',
+      taskId,
+      sessionId,
+      ref: `task/${taskId}`,
+      payload: { title: title.trim(), description, priority },
+    });
+    return { task: this.getTask(taskId), event };
+  }
+
+  assignTask({ taskId, assignedBy, assigneeId, note = null }) {
+    if (!assignedBy?.trim()) throw new Error('assignedBy is required');
+    if (!assigneeId?.trim()) throw new Error('assigneeId is required');
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`task does not exist: ${taskId}`);
+    if (task.status === 'completed' || task.status === 'cancelled') {
+      throw new Error(`cannot assign a ${task.status} task`);
+    }
+    const event = this.append({
+      agentId: assignedBy,
+      type: 'task.assigned',
+      taskId,
+      ref: `task/${taskId}`,
+      payload: { assigneeId: assigneeId.trim(), note },
+    });
+    return { task: this.getTask(taskId), event };
+  }
+
+  updateTaskStatus({ taskId, updatedBy, status, summary = null }) {
+    if (!updatedBy?.trim()) throw new Error('updatedBy is required');
+    if (!TASK_STATUSES.has(status)) throw new Error(`invalid task status: ${status}`);
+    if (summary !== null && typeof summary !== 'string') throw new Error('summary must be a string or null');
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`task does not exist: ${taskId}`);
+    this.#assertTaskTransition(task.status, status);
+    const event = this.append({
+      agentId: updatedBy,
+      type: 'task.status_changed',
+      taskId,
+      ref: `task/${taskId}`,
+      payload: { status, summary },
+    });
+    return { task: this.getTask(taskId), event };
+  }
+
+  getTask(taskId) {
+    const row = this.database.prepare('SELECT * FROM tasks WHERE task_id = ?').get(taskId);
+    return row ? this.#hydrateTask(row) : null;
+  }
+
+  listTasks({ assigneeId = null, status = null, limit = 100 } = {}) {
+    if (status !== null && !TASK_STATUSES.has(status)) throw new Error(`invalid task status: ${status}`);
+    const clauses = [];
+    const values = [];
+    if (assigneeId) { clauses.push('assignee_id = ?'); values.push(assigneeId); }
+    if (status) { clauses.push('status = ?'); values.push(status); }
+    values.push(limit);
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return this.database.prepare(`SELECT * FROM tasks ${where} ORDER BY updated_at DESC, task_id ASC LIMIT ?`)
+      .all(...values).map((row) => this.#hydrateTask(row));
+  }
+
+  rebuildTaskProjection() {
+    const transaction = this.database.transaction(() => {
+      this.database.prepare('DELETE FROM tasks').run();
+      const rows = this.database.prepare(`
+        SELECT * FROM events WHERE type IN ('task.created', 'task.assigned', 'task.status_changed')
+      `).all().map((row) => this.#hydrate(row));
+      const pending = new Map(rows.map((event) => [event.id, event]));
+      while (pending.size > 0) {
+        const ready = [...pending.values()].filter((event) => event.parents.every((parent) => !pending.has(parent)));
+        if (ready.length === 0) throw new Error('task event history has a causal cycle');
+        ready.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+        for (const event of ready) {
+          this.#projectTaskEvent(event);
+          pending.delete(event.id);
+        }
+      }
+      return rows.length;
+    });
     return transaction();
   }
 
@@ -332,18 +450,7 @@ export class EventStore {
         created_at: event.created_at,
         content_hash: contentHash,
       });
-      if (ref) {
-        this.database.prepare(`
-          INSERT INTO refs(name, event_id, updated_at) VALUES (?, ?, ?)
-          ON CONFLICT(name) DO UPDATE SET event_id=excluded.event_id, updated_at=excluded.updated_at
-        `).run(ref, event.id, now());
-      }
-      if (ingest) {
-        this.database.prepare('INSERT INTO source_events(source_key, source_offset, event_id) VALUES (?, ?, ?)')
-          .run(ingest.sourceKey, ingest.sourceOffset, event.id);
-        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset);
-      }
-      return {
+      const result = {
         id: event.id,
         taskId: event.task_id,
         sessionId: event.session_id,
@@ -356,7 +463,64 @@ export class EventStore {
         createdAt: event.created_at,
         contentHash,
       };
+      this.#projectTaskEvent(result);
+      if (ref) {
+        this.database.prepare(`
+          INSERT INTO refs(name, event_id, updated_at) VALUES (?, ?, ?)
+          ON CONFLICT(name) DO UPDATE SET event_id=excluded.event_id, updated_at=excluded.updated_at
+        `).run(ref, event.id, now());
+      }
+      if (ingest) {
+        this.database.prepare('INSERT INTO source_events(source_key, source_offset, event_id) VALUES (?, ?, ?)')
+          .run(ingest.sourceKey, ingest.sourceOffset, event.id);
+        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset);
+      }
+      return result;
     }
+  }
+
+  #projectTaskEvent(event) {
+    if (!event.taskId || !event.type.startsWith('task.')) return;
+    if (event.type === 'task.created') {
+      const { title, description = '', priority = 'normal' } = event.payload;
+      if (typeof title !== 'string' || !title.trim()) throw new Error('task.created requires a non-empty title');
+      if (typeof description !== 'string') throw new Error('task.created description must be a string');
+      if (!TASK_PRIORITIES.has(priority)) throw new Error(`invalid task priority: ${priority}`);
+      this.database.prepare(`
+        INSERT INTO tasks(task_id, title, description, priority, status, created_by, created_event_id,
+          updated_event_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)
+      `).run(event.taskId, title, description, priority, event.agentId, event.id, event.id, event.createdAt, event.createdAt);
+      return;
+    }
+    const task = this.getTask(event.taskId);
+    if (!task) throw new Error(`${event.type} references missing task: ${event.taskId}`);
+    if (event.type === 'task.assigned') {
+      const { assigneeId } = event.payload;
+      if (typeof assigneeId !== 'string' || !assigneeId.trim()) throw new Error('task.assigned requires assigneeId');
+      if (task.status === 'completed' || task.status === 'cancelled') throw new Error(`cannot assign a ${task.status} task`);
+      const nextStatus = task.status === 'open' ? 'assigned' : task.status;
+      this.database.prepare(`
+        UPDATE tasks SET assignee_id = ?, status = ?, updated_event_id = ?, updated_at = ? WHERE task_id = ?
+      `).run(assigneeId, nextStatus, event.id, event.createdAt, event.taskId);
+      return;
+    }
+    if (event.type === 'task.status_changed') {
+      const { status, summary = null } = event.payload;
+      if (!TASK_STATUSES.has(status)) throw new Error(`invalid task status: ${status}`);
+      if (summary !== null && typeof summary !== 'string') throw new Error('task.status_changed summary must be a string or null');
+      this.#assertTaskTransition(task.status, status);
+      this.database.prepare(`
+        UPDATE tasks SET status = ?, blocked_reason = ?, updated_event_id = ?, updated_at = ?,
+          completed_at = CASE WHEN ? = 'completed' THEN ? ELSE completed_at END
+        WHERE task_id = ?
+      `).run(status, status === 'blocked' ? summary : null, event.id, event.createdAt, status, event.createdAt, event.taskId);
+    }
+  }
+
+  #assertTaskTransition(current, next) {
+    if (current === next) throw new Error(`task is already ${next}`);
+    if (!TASK_TRANSITIONS[current]?.has(next)) throw new Error(`invalid task transition: ${current} -> ${next}`);
   }
 
   #advanceCursor(sourceKey, filePath, byteOffset) {
@@ -435,6 +599,24 @@ export class EventStore {
       source: parseJson(row.source_json, null),
       createdAt: row.created_at,
       contentHash: row.content_hash,
+    };
+  }
+
+  #hydrateTask(row) {
+    return {
+      id: row.task_id,
+      title: row.title,
+      description: row.description,
+      priority: row.priority,
+      status: row.status,
+      createdBy: row.created_by,
+      assigneeId: row.assignee_id,
+      blockedReason: row.blocked_reason,
+      createdEventId: row.created_event_id,
+      updatedEventId: row.updated_event_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
     };
   }
 }

@@ -95,6 +95,52 @@ server.registerTool('create_checkpoint', {
   repo, store, agentId, summary, taskId, commit,
 })));
 
+server.registerTool('create_task', {
+  title: 'Create a task',
+  description: 'Create a durable task with a current-state projection. The configured local agent is the creator.',
+  inputSchema: {
+    title: z.string().min(1),
+    description: z.string().optional(),
+    priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+  },
+}, async ({ title, description = '', priority = 'normal' }) => result(store.createTask({
+  createdBy: agentId, title, description, priority,
+})));
+
+server.registerTool('assign_task', {
+  title: 'Assign a task',
+  description: 'Assign an open, assigned, in-progress, or blocked task to an agent.',
+  inputSchema: {
+    task_id: z.string().min(1),
+    assignee_id: z.string().min(1),
+    note: z.string().nullable().optional(),
+  },
+}, async ({ task_id: taskId, assignee_id: assigneeId, note = null }) => result(store.assignTask({
+  taskId, assignedBy: agentId, assigneeId, note,
+})));
+
+server.registerTool('update_task_status', {
+  title: 'Update task status',
+  description: 'Change a task status through its lifecycle. completed and cancelled are terminal.',
+  inputSchema: {
+    task_id: z.string().min(1),
+    status: z.enum(['assigned', 'in_progress', 'blocked', 'completed', 'cancelled']),
+    summary: z.string().nullable().optional(),
+  },
+}, async ({ task_id: taskId, status, summary = null }) => result(store.updateTaskStatus({
+  taskId, updatedBy: agentId, status, summary,
+})));
+
+server.registerTool('list_tasks', {
+  title: 'List tasks',
+  description: 'List task state projected from immutable task events.',
+  inputSchema: {
+    assignee_id: z.string().nullable().optional(),
+    status: z.enum(['open', 'assigned', 'in_progress', 'blocked', 'completed', 'cancelled']).nullable().optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  },
+}, async ({ assignee_id: assigneeId = null, status = null, limit = 100 }) => result(store.listTasks({ assigneeId, status, limit })));
+
 const transport = new StdioServerTransport();
 const shutdown = async () => {
   store.close();
