@@ -134,6 +134,19 @@ node src/cli.mjs tasks --repo /absolute/path/to/project --agent coder
 The same operations are available through MCP as `create_task`, `assign_task`,
 `update_task_status`, and `list_tasks`.
 
+## Local Dashboard
+
+AgentGit includes a local, read-only operational dashboard for task state,
+event activity, message delivery counts, and branch refs:
+
+```sh
+node src/cli.mjs serve --repo /absolute/path/to/project --port 3210
+```
+
+Open the printed `http://127.0.0.1:3210` URL. The dashboard is local only and
+reads the existing AgentGit event store; it does not control the underlying
+agent or alter its prompt.
+
 ## Checkpoints and Git
 
 Record the current Git state without creating a commit:

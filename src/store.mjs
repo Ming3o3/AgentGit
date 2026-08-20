@@ -563,6 +563,23 @@ export class EventStore {
       .all(...values).map((item) => this.#hydrate(item));
   }
 
+  recentEvents({ limit = 200 } = {}) {
+    return this.database.prepare('SELECT * FROM events ORDER BY created_at DESC, id DESC LIMIT ?')
+      .all(limit).map((item) => this.#hydrate(item));
+  }
+
+  dashboardSummary() {
+    const tasks = Object.fromEntries(this.database.prepare(`
+      SELECT status, COUNT(*) AS count FROM tasks GROUP BY status
+    `).all().map((row) => [row.status, row.count]));
+    const deliveries = Object.fromEntries(this.database.prepare(`
+      SELECT status, COUNT(*) AS count FROM deliveries GROUP BY status
+    `).all().map((row) => [row.status, row.count]));
+    const agents = this.database.prepare('SELECT COUNT(DISTINCT agent_id) AS count FROM events').get().count;
+    const events = this.database.prepare('SELECT COUNT(*) AS count FROM events').get().count;
+    return { tasks, deliveries, agents, events };
+  }
+
   refs() {
     return this.database.prepare('SELECT name, event_id, updated_at FROM refs ORDER BY name').all();
   }

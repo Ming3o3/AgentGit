@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentGit</title>
+    <link rel="stylesheet" href="/assets/dashboard.css">
+  </head>
+  <body>
+    <div class="application-shell">
+      <header class="topbar">
+        <div>
+          <p class="product-name">AgentGit</p>
+          <p class="project-path" id="project-path">Loading project...</p>
+        </div>
+        <div class="topbar-actions">
+          <time id="updated-at"></time>
+          <button type="button" id="refresh">Refresh</button>
+        </div>
+      </header>
+      <main>
+        <section class="summary-strip" aria-label="Summary">
+          <div><span id="event-count">0</span><small>Events</small></div>
+          <div><span id="agent-count">0</span><small>Agents</small></div>
+          <div><span id="pending-count">0</span><small>Pending messages</small></div>
+          <div><span id="active-count">0</span><small>Active tasks</small></div>
+        </section>
+        <div class="workspace-grid">
+          <section class="task-section" aria-labelledby="task-heading">
+            <div class="section-heading">
+              <h1 id="task-heading">Tasks</h1>
+              <span id="task-total"></span>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Task</th><th>Owner</th><th>Priority</th><th>Status</th><th>Updated</th></tr></thead>
+                <tbody id="tasks"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="timeline-section" aria-labelledby="timeline-heading">
+            <div class="section-heading">
+              <h2 id="timeline-heading">Activity</h2>
+              <span id="event-total"></span>
+            </div>
+            <ol class="timeline" id="timeline"></ol>
+          </section>
+          <aside class="refs-section" aria-labelledby="refs-heading">
+            <div class="section-heading"><h2 id="refs-heading">Refs</h2><span id="ref-total"></span></div>
+            <ul class="refs" id="refs"></ul>
+          </aside>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/assets/dashboard.js"></script>
+  </body>
+</html>

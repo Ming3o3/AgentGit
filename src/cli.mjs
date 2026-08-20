@@ -5,6 +5,7 @@ import { normalizeCodexRecord } from './adapters/codex.mjs';
 import { createCheckpoint } from './git.mjs';
 import { scanCodexRollouts, watchCodexRollouts } from './watcher.mjs';
 import { codexMcpConfig } from './codex-config.mjs';
+import { startDashboard } from './dashboard-server.mjs';
 
 function usage() {
   console.error(`Usage:
@@ -23,6 +24,7 @@ function usage() {
   agentgit task-assign --repo <repo> --agent <id> --task <id> --to <agent-id> [--note <text>]
   agentgit task-status --repo <repo> --agent <id> --task <id> --status <status> [--summary <text>]
   agentgit tasks --repo <repo> [--agent <id>] [--status <status>]
+  agentgit serve --repo <repo> [--host <host>] [--port <port>]
   agentgit verify --repo <repo> <event-id>`);
   process.exit(1);
 }
@@ -154,6 +156,21 @@ try {
     const store = new EventStore(options.repo);
     try { print(store.listTasks({ assigneeId: options.agent ?? null, status: options.status ?? null, limit: Number(options.limit ?? 100) })); }
     finally { store.close(); }
+  } else if (command === 'serve') {
+    if (!options.repo) usage();
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+    const dashboard = await startDashboard({ repo: options.repo, host: options.host ?? '127.0.0.1', port: Number(options.port ?? 3210) });
+    console.log(dashboard.url);
+    try {
+      await new Promise((resolve) => controller.signal.addEventListener('abort', resolve, { once: true }));
+    } finally {
+      await new Promise((resolve) => dashboard.server.close(resolve));
+      process.removeListener('SIGINT', stop);
+      process.removeListener('SIGTERM', stop);
+    }
   } else usage();
 } catch (error) {
   console.error(`agentgit: ${error.message}`);
