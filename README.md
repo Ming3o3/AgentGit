@@ -109,6 +109,17 @@ Each event is also assigned a local monotonic sequence in a rebuildable
 projection. This makes timelines and inboxes deterministic even when multiple
 events share the same timestamp, without changing the immutable event hash.
 
+Audit the whole local history at any time. It is read-only and checks event
+hashes, DAG links, refs, delivery rows, content-addressed objects, ordering,
+and the task projection:
+
+```sh
+node src/cli.mjs verify --repo /absolute/path/to/project --all
+```
+
+The same audit is available to configured agents through the `verify_history`
+MCP tool.
+
 ## Tasks
 
 Tasks are event-sourced. The immutable history uses `task.created`,

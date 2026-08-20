@@ -73,6 +73,13 @@ server.registerTool('get_event', {
   return result(event);
 });
 
+server.registerTool('verify_history', {
+  title: 'Verify AgentGit history',
+  description: 'Read-only audit of the local event DAG, hashes, refs, deliveries, objects, and task projection.',
+  inputSchema: {},
+  annotations: { readOnlyHint: true },
+}, async () => result(store.verifyAll()));
+
 server.registerTool('task_history', {
   title: 'Read task history',
   description: 'Read the chronological immutable event history for a task.',

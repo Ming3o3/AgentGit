@@ -36,6 +36,15 @@ test('CLI receives messages and supports non-mutating inbox inspection', () => {
   assert.equal(received[0].delivery.status, 'delivered');
 });
 
+test('CLI audits the complete AgentGit history', () => {
+  const repo = tempRepo();
+  cli(['init', repo]);
+  cli(['emit', '--repo', repo, '--agent', 'planner', '--type', 'note.recorded', '--payload', '{"text":"ready"}']);
+  const audit = JSON.parse(cli(['verify', '--repo', repo, '--all']));
+  assert.equal(audit.valid, true);
+  assert.equal(audit.checked.events, 1);
+});
+
 test('CLI recognizes terminal --commit and --once flags', () => {
   const repo = tempRepo();
   git(repo, ['init', '-b', 'main']);

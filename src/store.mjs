@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { sanitizePayload } from './payload.mjs';
+import { readObject } from './objects.mjs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from './canonical-json.mjs';
 
@@ -30,6 +31,117 @@ function id() {
 function parseJson(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback;
   return JSON.parse(value);
+}
+
+function eventForHash(row) {
+  return {
+    id: row.id,
+    task_id: row.task_id ?? null,
+    session_id: row.session_id ?? null,
+    agent_id: row.agent_id,
+    type: row.type,
+    parents: parseJson(row.parents_json, []),
+    causation_id: row.causation_id ?? null,
+    payload: parseJson(row.payload_json, {}),
+    source: parseJson(row.source_json, null),
+    created_at: row.created_at,
+  };
+}
+
+function verifyEventRow(row) {
+  try {
+    const event = eventForHash(row);
+    const actual = sha256(event);
+    return { valid: actual === row.content_hash, expected: row.content_hash, actual, event };
+  } catch (error) {
+    return { valid: false, expected: row.content_hash, actual: null, reason: `invalid event encoding: ${error.message}`, event: null };
+  }
+}
+
+function objectReferences(value, references = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) objectReferences(item, references);
+  } else if (value && typeof value === 'object') {
+    if (typeof value.objectRef === 'string') references.push({ reference: value.objectRef, bytes: value.bytes });
+    if (typeof value.hash === 'string') references.push({ reference: value.hash, bytes: value.bytes });
+    for (const item of Object.values(value)) objectReferences(item, references);
+  }
+  return references;
+}
+
+function validObjectReference(reference) {
+  return /^sha256:[a-f0-9]{64}$/iu.test(reference);
+}
+
+function addIssue(issues, issue) {
+  if (issues.length < 100) issues.push(issue);
+}
+
+function expectedTaskProjection(events, addAuditIssue) {
+  const tasks = new Map();
+  for (const event of events) {
+    const taskId = event?.taskId ?? event?.task_id;
+    const createdAt = event?.createdAt ?? event?.created_at;
+    const agentId = event?.agentId ?? event?.agent_id;
+    if (!taskId || !event.type.startsWith('task.')) continue;
+    if (event.type === 'task.created') {
+      const { title, description = '', priority = 'normal' } = event.payload ?? {};
+      if (typeof title !== 'string' || !title.trim() || typeof description !== 'string' || !TASK_PRIORITIES.has(priority)) {
+        addAuditIssue({ kind: 'invalid_task_created', eventId: event.id, taskId });
+        continue;
+      }
+      if (tasks.has(taskId)) {
+        addAuditIssue({ kind: 'duplicate_task_created', eventId: event.id, taskId });
+        continue;
+      }
+      tasks.set(taskId, {
+        id: taskId,
+        title,
+        description,
+        priority,
+        status: 'open',
+        createdBy: agentId,
+        assigneeId: null,
+        blockedReason: null,
+        createdEventId: event.id,
+        updatedEventId: event.id,
+        createdAt,
+        updatedAt: createdAt,
+        completedAt: null,
+      });
+      continue;
+    }
+    const task = tasks.get(taskId);
+    if (!task) {
+      addAuditIssue({ kind: 'task_event_missing_task', eventId: event.id, taskId });
+      continue;
+    }
+    if (event.type === 'task.assigned') {
+      const assigneeId = event.payload?.assigneeId;
+      if (typeof assigneeId !== 'string' || !assigneeId.trim() || task.status === 'completed' || task.status === 'cancelled') {
+        addAuditIssue({ kind: 'invalid_task_assignment', eventId: event.id, taskId });
+        continue;
+      }
+      task.assigneeId = assigneeId;
+      task.status = task.status === 'open' ? 'assigned' : task.status;
+      task.updatedEventId = event.id;
+      task.updatedAt = createdAt;
+      continue;
+    }
+    if (event.type === 'task.status_changed') {
+      const { status, summary = null } = event.payload ?? {};
+      if (!TASK_STATUSES.has(status) || (summary !== null && typeof summary !== 'string') || !TASK_TRANSITIONS[task.status]?.has(status)) {
+        addAuditIssue({ kind: 'invalid_task_transition', eventId: event.id, taskId, from: task.status, to: status ?? null });
+        continue;
+      }
+      task.status = status;
+      task.blockedReason = status === 'blocked' ? summary : null;
+      task.updatedEventId = event.id;
+      task.updatedAt = createdAt;
+      if (status === 'completed') task.completedAt = createdAt;
+    }
+  }
+  return tasks;
 }
 
 export function repoDbPath(repo) {
@@ -655,20 +767,168 @@ export class EventStore {
   verify(eventId) {
     const row = this.database.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
     if (!row) return { valid: false, reason: 'event not found' };
-    const event = {
-      id: row.id,
-      task_id: row.task_id ?? null,
-      session_id: row.session_id ?? null,
-      agent_id: row.agent_id,
-      type: row.type,
-      parents: parseJson(row.parents_json, []),
-      causation_id: row.causation_id ?? null,
-      payload: parseJson(row.payload_json, {}),
-      source: parseJson(row.source_json, null),
-      created_at: row.created_at,
+    const result = verifyEventRow(row);
+    return { valid: result.valid, expected: result.expected, actual: result.actual, ...(result.reason ? { reason: result.reason } : {}) };
+  }
+
+  verifyAll() {
+    const issues = [];
+    const checked = { events: 0, eventOrder: 0, refs: 0, deliveries: 0, objects: 0, sourceEvents: 0, tasks: 0 };
+    const rows = this.database.prepare(`
+      SELECT events.*, event_order.sequence AS event_sequence
+      FROM events LEFT JOIN event_order ON event_order.event_id = events.id
+      ORDER BY event_order.sequence ASC, events.rowid ASC
+    `).all();
+    const events = new Map();
+    const orderedEvents = [];
+    let previousSequence = 0;
+    for (const row of rows) {
+      checked.events += 1;
+      const result = verifyEventRow(row);
+      if (!result.valid) addIssue(issues, {
+        kind: 'event_hash_mismatch', eventId: row.id, expected: result.expected, actual: result.actual, reason: result.reason,
+      });
+      events.set(row.id, result.event);
+      if (result.event) orderedEvents.push(result.event);
+      checked.eventOrder += 1;
+      if (!Number.isInteger(row.event_sequence)) {
+        addIssue(issues, { kind: 'event_order_missing', eventId: row.id });
+      } else if (row.event_sequence <= previousSequence) {
+        addIssue(issues, { kind: 'event_order_invalid', eventId: row.id, sequence: row.event_sequence });
+      } else {
+        previousSequence = row.event_sequence;
+      }
+    }
+
+    for (const row of this.database.prepare(`
+      SELECT event_order.event_id FROM event_order
+      LEFT JOIN events ON events.id = event_order.event_id
+      WHERE events.id IS NULL
+    `).all()) {
+      addIssue(issues, { kind: 'event_order_orphan', eventId: row.event_id });
+    }
+
+    const visiting = new Set();
+    const visited = new Set();
+    const visit = (eventId) => {
+      if (visited.has(eventId)) return;
+      if (visiting.has(eventId)) {
+        addIssue(issues, { kind: 'causal_cycle', eventId });
+        return;
+      }
+      const event = events.get(eventId);
+      if (!event) return;
+      visiting.add(eventId);
+      const parents = Array.isArray(event.parents) ? event.parents : null;
+      if (!parents) {
+        addIssue(issues, { kind: 'invalid_parents', eventId });
+      } else {
+        for (const parent of parents) {
+          if (!events.has(parent)) addIssue(issues, { kind: 'missing_parent', eventId, parentId: parent });
+          else visit(parent);
+        }
+      }
+      if (event.causation_id) {
+        if (!events.has(event.causation_id)) addIssue(issues, { kind: 'missing_causation', eventId, causationId: event.causation_id });
+        else visit(event.causation_id);
+      }
+      visiting.delete(eventId);
+      visited.add(eventId);
     };
-    const actual = sha256(event);
-    return { valid: actual === row.content_hash, expected: row.content_hash, actual };
+    for (const eventId of events.keys()) visit(eventId);
+
+    for (const ref of this.refs()) {
+      checked.refs += 1;
+      if (ref.event_id !== null && !events.has(ref.event_id)) addIssue(issues, { kind: 'ref_missing_event', ref: ref.name, eventId: ref.event_id });
+    }
+
+    const deliveries = new Map();
+    for (const delivery of this.database.prepare('SELECT event_id, recipient_id, status FROM deliveries').all()) {
+      checked.deliveries += 1;
+      if (!events.has(delivery.event_id)) {
+        addIssue(issues, { kind: 'delivery_missing_event', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+        continue;
+      }
+      const recipients = deliveries.get(delivery.event_id) ?? [];
+      recipients.push(delivery.recipient_id);
+      deliveries.set(delivery.event_id, recipients);
+      if (!DELIVERY_STATUSES.has(delivery.status)) addIssue(issues, { kind: 'invalid_delivery_status', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+    }
+    for (const [eventId, event] of events) {
+      const recipients = deliveries.get(eventId) ?? [];
+      if (!event || event.type !== 'message.sent') {
+        if (recipients.length > 0) addIssue(issues, { kind: 'delivery_for_non_message', eventId });
+        continue;
+      }
+      const declared = event.payload?.to;
+      if (!Array.isArray(declared) || declared.some((recipient) => typeof recipient !== 'string' || !recipient.trim())) {
+        addIssue(issues, { kind: 'invalid_message_recipients', eventId });
+        continue;
+      }
+      const expected = [...new Set(declared)].sort();
+      const actual = [...new Set(recipients)].sort();
+      if (expected.length !== actual.length || expected.some((recipient, index) => recipient !== actual[index])) {
+        addIssue(issues, { kind: 'delivery_recipients_mismatch', eventId, expected, actual });
+      }
+    }
+
+    const references = new Map();
+    for (const [eventId, event] of events) {
+      if (!event) continue;
+      for (const reference of objectReferences(event.payload)) {
+        const entries = references.get(reference.reference) ?? [];
+        entries.push({ eventId, bytes: reference.bytes });
+        references.set(reference.reference, entries);
+      }
+    }
+    for (const [reference, uses] of references) {
+      checked.objects += 1;
+      if (!validObjectReference(reference)) {
+        addIssue(issues, { kind: 'invalid_object_reference', reference, eventIds: uses.map((use) => use.eventId) });
+        continue;
+      }
+      let content;
+      try { content = readObject(this.repo, reference); } catch {
+        addIssue(issues, { kind: 'object_missing', reference, eventIds: uses.map((use) => use.eventId) });
+        continue;
+      }
+      const actual = `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
+      if (actual !== reference) addIssue(issues, { kind: 'object_hash_mismatch', reference, actual, eventIds: uses.map((use) => use.eventId) });
+      for (const use of uses) {
+        if (Number.isInteger(use.bytes) && use.bytes !== content.length) {
+          addIssue(issues, { kind: 'object_size_mismatch', reference, eventId: use.eventId, expected: use.bytes, actual: content.length });
+        }
+      }
+    }
+
+    for (const source of this.database.prepare(`
+      SELECT source_events.source_key, source_events.source_offset, source_events.event_id, events.id AS existing_event_id
+      FROM source_events LEFT JOIN events ON events.id = source_events.event_id
+    `).all()) {
+      checked.sourceEvents += 1;
+      if (!source.existing_event_id) {
+        addIssue(issues, { kind: 'source_event_missing', sourceKey: source.source_key, sourceOffset: source.source_offset, eventId: source.event_id });
+      }
+    }
+
+    const expectedTasks = expectedTaskProjection(orderedEvents, (issue) => addIssue(issues, issue));
+    const projectedTasks = new Map(this.database.prepare('SELECT * FROM tasks').all().map((row) => [row.task_id, this.#hydrateTask(row)]));
+    for (const [taskId, expected] of expectedTasks) {
+      checked.tasks += 1;
+      const actual = projectedTasks.get(taskId);
+      if (!actual) {
+        addIssue(issues, { kind: 'task_projection_missing', taskId });
+        continue;
+      }
+      const fields = ['title', 'description', 'priority', 'status', 'createdBy', 'assigneeId', 'blockedReason', 'createdEventId', 'updatedEventId', 'createdAt', 'updatedAt', 'completedAt'];
+      const mismatches = fields.filter((field) => actual[field] !== expected[field]);
+      if (mismatches.length > 0) addIssue(issues, { kind: 'task_projection_mismatch', taskId, fields: mismatches });
+    }
+    for (const taskId of projectedTasks.keys()) {
+      if (!expectedTasks.has(taskId)) checked.tasks += 1;
+      if (!expectedTasks.has(taskId)) addIssue(issues, { kind: 'task_projection_orphan', taskId });
+    }
+    return { valid: issues.length === 0, checked, issues };
   }
 
   #hydrate(row) {

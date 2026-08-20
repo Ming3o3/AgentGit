@@ -86,6 +86,26 @@ test('rebuilds the event order projection without modifying historical events', 
   reopened.close();
 });
 
+test('audits hashes, links, objects, and rebuildable projections', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const { task } = store.createTask({ createdBy: 'planner', title: 'Audit state' });
+  store.assignTask({ taskId: task.id, assignedBy: 'planner', assigneeId: 'coder' });
+  const output = store.append({ agentId: 'coder', type: 'tool.completed', payload: { output: 'x'.repeat(9000) }, taskId: task.id });
+  assert.deepEqual(store.verifyAll().issues, []);
+
+  const objectRef = output.payload.output.objectRef;
+  const objectPath = path.join(repo, '.agentgit', 'objects', objectRef.slice(7, 9), objectRef.slice(9));
+  fs.unlinkSync(objectPath);
+  store.database.prepare('UPDATE tasks SET title = ? WHERE task_id = ?').run('Corrupt title', task.id);
+  const audit = store.verifyAll();
+  assert.equal(audit.valid, false);
+  assert.ok(audit.issues.some((issue) => issue.kind === 'object_missing' && issue.reference === objectRef));
+  assert.ok(audit.issues.some((issue) => issue.kind === 'task_projection_mismatch' && issue.taskId === task.id));
+  store.close();
+});
+
 test('rejects a missing parent and never writes a partial event', () => {
   const repo = tempRepo();
   initRepository(repo);

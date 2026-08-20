@@ -25,7 +25,8 @@ function usage() {
   agentgit task-status --repo <repo> --agent <id> --task <id> --status <status> [--summary <text>]
   agentgit tasks --repo <repo> [--agent <id>] [--status <status>]
   agentgit serve --repo <repo> [--host <host>] [--port <port>]
-  agentgit verify --repo <repo> <event-id>`);
+  agentgit verify --repo <repo> <event-id>
+  agentgit verify --repo <repo> --all`);
   process.exit(1);
 }
 
@@ -75,10 +76,10 @@ try {
     try { print(store.get(options._[0])); }
     finally { store.close(); }
   } else if (command === 'verify') {
-    if (!options.repo || !options._[0]) usage();
+    if (!options.repo || (!options._[0] && options.all !== true)) usage();
     const store = new EventStore(options.repo);
     try {
-      const result = store.verify(options._[0]);
+      const result = options.all === true ? store.verifyAll() : store.verify(options._[0]);
       print(result);
       if (!result.valid) process.exitCode = 1;
     } finally { store.close(); }
