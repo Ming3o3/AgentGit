@@ -57,6 +57,35 @@ test('uses the ref head as the next parent and returns branch history', () => {
   store.close();
 });
 
+test('keeps a stable insertion order when events share a timestamp', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const createdAt = '2026-08-20T12:00:00.000Z';
+  const first = store.append({ agentId: 'planner', type: 'task.created', payload: {}, createdAt });
+  const second = store.append({ agentId: 'coder', type: 'tool.called', payload: {}, createdAt });
+  const third = store.append({ agentId: 'coder', type: 'tool.completed', payload: {}, createdAt });
+  assert.deepEqual(store.list().map((event) => event.id), [first.id, second.id, third.id]);
+  assert.deepEqual(store.recentEvents().map((event) => event.id), [third.id, second.id, first.id]);
+  store.close();
+});
+
+test('rebuilds the event order projection without modifying historical events', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const first = store.append({ agentId: 'planner', type: 'task.created', payload: {} });
+  const second = store.append({ agentId: 'coder', type: 'tool.completed', payload: {} });
+  store.database.exec('DROP TABLE event_order');
+  store.close();
+
+  const reopened = new EventStore(repo);
+  assert.equal(reopened.verify(first.id).valid, true);
+  assert.equal(reopened.verify(second.id).valid, true);
+  assert.deepEqual(reopened.list().map((event) => event.id), [first.id, second.id]);
+  reopened.close();
+});
+
 test('rejects a missing parent and never writes a partial event', () => {
   const repo = tempRepo();
   initRepository(repo);

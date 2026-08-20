@@ -50,12 +50,12 @@ server.registerTool('send_message', {
 
 server.registerTool('read_inbox', {
   title: 'Read agent inbox',
-  description: 'Read messages addressed to the configured local agent. Use status=pending for unacknowledged work.',
+  description: 'Receive messages addressed to the configured local agent. Pending messages become delivered when returned; acknowledge them only after acting on them.',
   inputSchema: {
     status: z.enum(['pending', 'delivered', 'acknowledged']).nullable().optional(),
     limit: z.number().int().min(1).max(500).optional(),
   },
-}, async ({ status = null, limit = 100 }) => result(store.inbox({ agentId, status, limit })));
+}, async ({ status = null, limit = 100 }) => result(store.receiveInbox({ agentId, status, limit })));
 
 server.registerTool('acknowledge_message', {
   title: 'Acknowledge message',

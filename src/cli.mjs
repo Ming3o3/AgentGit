@@ -15,7 +15,7 @@ function usage() {
   agentgit show --repo <repo> <event-id>
   agentgit import-codex --repo <repo> --file <rollout.jsonl> --agent <id> [--task <id>] [--session <id>] [--ref <name>]
   agentgit send --repo <repo> --from <id> --to <id[,id...]> --text <message> [--subject <text>]
-  agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged]
+  agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged] [--peek]
   agentgit ack --repo <repo> --agent <id> --event <event-id>
   agentgit checkpoint --repo <repo> --agent <id> --summary <text> [--task <id>] [--ref <name>] [--commit]
   agentgit watch-codex --repo <repo> --dir <codex-sessions-dir> --agent <id> [--task <id>] [--interval <ms>] [--once]
@@ -98,7 +98,10 @@ try {
   } else if (command === 'inbox') {
     if (!options.repo || !options.agent) usage();
     const store = new EventStore(options.repo);
-    try { print(store.inbox({ agentId: options.agent, status: options.status ?? null, limit: Number(options.limit ?? 100) })); }
+    try {
+      const input = { agentId: options.agent, status: options.status ?? null, limit: Number(options.limit ?? 100) };
+      print(options.peek === true ? store.inbox(input) : store.receiveInbox(input));
+    }
     finally { store.close(); }
   } else if (command === 'ack') {
     if (!options.repo || !options.agent || !options.event) usage();

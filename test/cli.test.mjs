@@ -25,6 +25,17 @@ test('CLI creates, assigns, and advances a task', () => {
   assert.equal(JSON.parse(cli(['tasks', '--repo', repo, '--agent', 'coder']))[0].id, taskId);
 });
 
+test('CLI receives messages and supports non-mutating inbox inspection', () => {
+  const repo = tempRepo();
+  cli(['init', repo]);
+  const sent = JSON.parse(cli(['send', '--repo', repo, '--from', 'planner', '--to', 'coder', '--text', 'Start work']));
+  const peek = JSON.parse(cli(['inbox', '--repo', repo, '--agent', 'coder', '--peek']));
+  assert.equal(peek[0].delivery.status, 'pending');
+  const received = JSON.parse(cli(['inbox', '--repo', repo, '--agent', 'coder']));
+  assert.equal(received[0].id, sent.id);
+  assert.equal(received[0].delivery.status, 'delivered');
+});
+
 test('CLI recognizes terminal --commit and --once flags', () => {
   const repo = tempRepo();
   git(repo, ['init', '-b', 'main']);

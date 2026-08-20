@@ -6,9 +6,10 @@ import { sanitizePayload } from './payload.mjs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from './canonical-json.mjs';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const TASK_STATUSES = new Set(['open', 'assigned', 'in_progress', 'blocked', 'completed', 'cancelled']);
 const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const DELIVERY_STATUSES = new Set(['pending', 'delivered', 'acknowledged']);
 const TASK_TRANSITIONS = {
   open: new Set(['assigned', 'in_progress', 'blocked', 'cancelled']),
   assigned: new Set(['in_progress', 'blocked', 'cancelled']),
@@ -60,6 +61,11 @@ export function initRepository(repo) {
       created_at TEXT NOT NULL,
       content_hash TEXT NOT NULL UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS event_order (
+      event_id TEXT PRIMARY KEY,
+      sequence INTEGER NOT NULL UNIQUE,
+      FOREIGN KEY (event_id) REFERENCES events(id)
+    );
     CREATE TABLE IF NOT EXISTS refs (
       name TEXT PRIMARY KEY,
       event_id TEXT,
@@ -109,6 +115,7 @@ export function initRepository(repo) {
     CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, created_at);
     CREATE INDEX IF NOT EXISTS events_agent_time ON events(agent_id, created_at);
     CREATE INDEX IF NOT EXISTS events_type_time ON events(type, created_at);
+    CREATE INDEX IF NOT EXISTS event_order_sequence ON event_order(sequence);
     CREATE INDEX IF NOT EXISTS deliveries_recipient_status ON deliveries(recipient_id, status, created_at);
     CREATE INDEX IF NOT EXISTS tasks_assignee_status ON tasks(assignee_id, status, updated_at);
     CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_update
@@ -119,12 +126,33 @@ export function initRepository(repo) {
       BEFORE DELETE ON events BEGIN
         SELECT RAISE(ABORT, 'events are immutable');
       END;
-    INSERT INTO metadata(key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
   `);
+  ensureEventOrder(database);
+  database.prepare(`
+    INSERT INTO metadata(key, value) VALUES ('schema_version', ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value
+  `).run(String(SCHEMA_VERSION));
   database.close();
   ensureGitExcludesState(root);
   return { repo: root, database: path.join(directory, 'events.db') };
+}
+
+function ensureEventOrder(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS event_order (
+      event_id TEXT PRIMARY KEY,
+      sequence INTEGER NOT NULL UNIQUE,
+      FOREIGN KEY (event_id) REFERENCES events(id)
+    );
+    CREATE INDEX IF NOT EXISTS event_order_sequence ON event_order(sequence);
+  `);
+  database.prepare(`
+    INSERT OR IGNORE INTO event_order(event_id, sequence)
+    SELECT events.id, events.rowid
+    FROM events LEFT JOIN event_order ON event_order.event_id = events.id
+    WHERE event_order.event_id IS NULL
+    ORDER BY events.rowid ASC
+  `).run();
 }
 
 function ensureGitExcludesState(root) {
@@ -152,6 +180,7 @@ export class EventStore {
     this.database = new Database(repoDbPath(this.repo));
     this.database.pragma('journal_mode = WAL');
     this.database.pragma('foreign_keys = ON');
+    ensureEventOrder(this.database);
   }
 
   close() {
@@ -322,6 +351,7 @@ export class EventStore {
 
   inbox({ agentId, status = null, limit = 100 } = {}) {
     if (!agentId?.trim()) throw new Error('agentId is required');
+    if (status !== null && !DELIVERY_STATUSES.has(status)) throw new Error(`invalid delivery status: ${status}`);
     const values = [agentId];
     const condition = status ? 'AND d.status = ?' : '';
     if (status) values.push(status);
@@ -329,9 +359,11 @@ export class EventStore {
     return this.database.prepare(`
       SELECT e.*, d.recipient_id, d.status AS delivery_status, d.created_at AS delivery_created_at,
         d.delivered_at, d.acknowledged_at
-      FROM deliveries d JOIN events e ON e.id = d.event_id
+      FROM deliveries d
+      JOIN events e ON e.id = d.event_id
+      JOIN event_order o ON o.event_id = e.id
       WHERE d.recipient_id = ? ${condition}
-      ORDER BY e.created_at ASC LIMIT ?
+      ORDER BY o.sequence ASC LIMIT ?
     `).all(...values).map((row) => ({
       ...this.#hydrate(row),
       delivery: {
@@ -342,6 +374,30 @@ export class EventStore {
         acknowledgedAt: row.acknowledged_at,
       },
     }));
+  }
+
+  receiveInbox({ agentId, status = null, limit = 100 } = {}) {
+    const transaction = this.database.transaction(() => {
+      const messages = this.inbox({ agentId, status, limit });
+      const deliveredAt = now();
+      const markDelivered = this.database.prepare(`
+        UPDATE deliveries SET status = 'delivered', delivered_at = ?
+        WHERE event_id = ? AND recipient_id = ? AND status = 'pending'
+      `);
+      return messages.map((message) => {
+        if (message.delivery.status !== 'pending') return message;
+        const changed = markDelivered.run(deliveredAt, message.id, agentId).changes;
+        if (changed === 0) {
+          const delivery = this.delivery(message.id, agentId);
+          return { ...message, delivery };
+        }
+        return {
+          ...message,
+          delivery: { ...message.delivery, status: 'delivered', deliveredAt },
+        };
+      });
+    });
+    return transaction();
   }
 
   markDelivered(eventId, recipientId) {
@@ -450,6 +506,10 @@ export class EventStore {
         created_at: event.created_at,
         content_hash: contentHash,
       });
+      this.database.prepare(`
+        INSERT INTO event_order(event_id, sequence)
+        SELECT ?, COALESCE(MAX(sequence), 0) + 1 FROM event_order
+      `).run(event.id);
       const result = {
         id: event.id,
         taskId: event.task_id,
@@ -549,8 +609,10 @@ export class EventStore {
           SELECT json_each.value FROM events, history, json_each(events.parents_json)
             WHERE events.id = history.id
         )
-        SELECT events.* FROM events JOIN history ON history.id = events.id
-        ORDER BY events.created_at ASC LIMIT ?
+        SELECT events.* FROM events
+        JOIN history ON history.id = events.id
+        JOIN event_order ON event_order.event_id = events.id
+        ORDER BY event_order.sequence ASC LIMIT ?
       `).all(row.event_id, limit);
       return rows.map((item) => this.#hydrate(item));
     }
@@ -559,12 +621,18 @@ export class EventStore {
     if (type) { conditions.push('type = ?'); values.push(type); }
     values.push(limit);
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    return this.database.prepare(`SELECT * FROM events ${where} ORDER BY created_at ASC LIMIT ?`)
+    return this.database.prepare(`
+      SELECT events.* FROM events JOIN event_order ON event_order.event_id = events.id
+      ${where} ORDER BY event_order.sequence ASC LIMIT ?
+    `)
       .all(...values).map((item) => this.#hydrate(item));
   }
 
   recentEvents({ limit = 200 } = {}) {
-    return this.database.prepare('SELECT * FROM events ORDER BY created_at DESC, id DESC LIMIT ?')
+    return this.database.prepare(`
+      SELECT events.* FROM events JOIN event_order ON event_order.event_id = events.id
+      ORDER BY event_order.sequence DESC LIMIT ?
+    `)
       .all(limit).map((item) => this.#hydrate(item));
   }
 

@@ -101,6 +101,13 @@ node src/cli.mjs ack --repo /absolute/path/to/project --agent coder --event evt_
 
 Messages are immutable `message.sent` events. Delivery records are separate,
 per-recipient mutable state: `pending`, `delivered`, and `acknowledged`.
+Reading an inbox marks returned pending messages as `delivered`; use `ack` only
+after the recipient has acted on the message. Add `--peek` when inspecting an
+inbox without changing delivery state.
+
+Each event is also assigned a local monotonic sequence in a rebuildable
+projection. This makes timelines and inboxes deterministic even when multiple
+events share the same timestamp, without changing the immutable event hash.
 
 ## Tasks
 
