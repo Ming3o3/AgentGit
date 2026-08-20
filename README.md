@@ -105,6 +105,11 @@ Reading an inbox marks returned pending messages as `delivered`; use `ack` only
 after the recipient has acted on the message. Add `--peek` when inspecting an
 inbox without changing delivery state.
 
+When a message is an explicit response to another event, pass its ID through
+`--causation evt_...` (or `causation_event_id` in MCP). This creates a durable
+causal edge in the event DAG; use `references` for related evidence that is not
+the direct cause of the response.
+
 Each event is also assigned a local monotonic sequence in a rebuildable
 projection. This makes timelines and inboxes deterministic even when multiple
 events share the same timestamp, without changing the immutable event hash.

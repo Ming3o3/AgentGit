@@ -52,6 +52,10 @@ test('exposes durable messaging through MCP stdio', async () => {
     const reviewerInbox = await ackClient.callTool({ name: 'read_inbox', arguments: {} });
     const received = JSON.parse(reviewerInbox.content[0].text)[0];
     assert.equal(received.delivery.status, 'delivered');
+    const reply = await ackClient.callTool({ name: 'send_message', arguments: {
+      to: ['coder'], text: 'Review started', causation_event_id: received.id,
+    } });
+    assert.equal(JSON.parse(reply.content[0].text).causationId, received.id);
     const ack = await ackClient.callTool({ name: 'acknowledge_message', arguments: { event_id: received.id } });
     assert.equal(JSON.parse(ack.content[0].text).status, 'acknowledged');
   } finally {

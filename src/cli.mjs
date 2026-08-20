@@ -14,7 +14,7 @@ function usage() {
   agentgit log --repo <repo> [--ref <name>] [--task <id>] [--agent <id>] [--type <type>]
   agentgit show --repo <repo> <event-id>
   agentgit import-codex --repo <repo> --file <rollout.jsonl> --agent <id> [--task <id>] [--session <id>] [--ref <name>]
-  agentgit send --repo <repo> --from <id> --to <id[,id...]> --text <message> [--subject <text>]
+  agentgit send --repo <repo> --from <id> --to <id[,id...]> --text <message> [--subject <text>] [--causation <event-id>]
   agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged] [--peek]
   agentgit ack --repo <repo> --agent <id> --event <event-id>
   agentgit checkpoint --repo <repo> --agent <id> --summary <text> [--task <id>] [--ref <name>] [--commit]
@@ -95,7 +95,7 @@ try {
     if (!options.repo || !options.from || !options.to || !options.text) usage();
     const store = new EventStore(options.repo);
     try {
-      print(store.sendMessage({ from: options.from, to: String(options.to).split(','), text: options.text, subject: options.subject ?? null, taskId: options.task, sessionId: options.session, ref: options.ref }));
+      print(store.sendMessage({ from: options.from, to: String(options.to).split(','), text: options.text, subject: options.subject ?? null, taskId: options.task, sessionId: options.session, ref: options.ref, causationId: options.causation ?? null }));
     } finally { store.close(); }
   } else if (command === 'inbox') {
     if (!options.repo || !options.agent) usage();

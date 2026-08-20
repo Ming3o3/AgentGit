@@ -438,7 +438,7 @@ export class EventStore {
     return transaction.immediate();
   }
 
-  sendMessage({ from, to, text, subject = null, taskId = null, sessionId = null, ref = null, references = [] }) {
+  sendMessage({ from, to, text, subject = null, taskId = null, sessionId = null, ref = null, causationId = null, references = [] }) {
     const recipients = Array.isArray(to) ? to : [to];
     const cleanedRecipients = [...new Set(recipients.map((item) => String(item).trim()).filter(Boolean))];
     if (cleanedRecipients.length === 0) throw new Error('at least one recipient is required');
@@ -451,6 +451,7 @@ export class EventStore {
         taskId,
         sessionId,
         ref,
+        causationId,
         payload: { to: cleanedRecipients, subject, text, references },
       });
       const insert = this.database.prepare(`

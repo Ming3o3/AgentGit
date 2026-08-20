@@ -42,10 +42,11 @@ server.registerTool('send_message', {
     text: z.string().min(1).describe('Message body'),
     subject: z.string().nullable().optional().describe('Optional short subject'),
     task_id: z.string().nullable().optional().describe('Optional task ID'),
+    causation_event_id: z.string().min(1).nullable().optional().describe('Optional event this message directly responds to'),
     references: z.array(z.string()).optional().describe('Event IDs or Git checkpoint references'),
   },
-}, async ({ to, text, subject = null, task_id: taskId = null, references = [] }) => result(store.sendMessage({
-  from: agentId, to, text, subject, taskId, references,
+}, async ({ to, text, subject = null, task_id: taskId = null, causation_event_id: causationId = null, references = [] }) => result(store.sendMessage({
+  from: agentId, to, text, subject, taskId, causationId, references,
 })));
 
 server.registerTool('read_inbox', {

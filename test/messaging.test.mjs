@@ -21,6 +21,18 @@ test('sends one immutable event to multiple recipient inboxes', () => {
   store.close();
 });
 
+test('links a reply message to the event that caused it', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const request = store.sendMessage({ from: 'planner', to: 'coder', text: 'Start' });
+  const reply = store.sendMessage({ from: 'coder', to: 'planner', text: 'Started', causationId: request.id });
+  assert.equal(reply.causationId, request.id);
+  assert.equal(store.get(reply.id).causationId, request.id);
+  assert.throws(() => store.sendMessage({ from: 'coder', to: 'planner', text: 'Broken', causationId: 'evt_missing' }), /causation event does not exist/);
+  store.close();
+});
+
 test('acknowledgement is idempotent and only changes delivery state', () => {
   const repo = tempRepo();
   initRepository(repo);
