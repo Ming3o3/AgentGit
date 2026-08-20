@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { sanitizePayload } from './payload.mjs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from './canonical-json.mjs';
 
@@ -307,7 +308,7 @@ export class EventStore {
         type,
         parents: [...new Set(resolvedParents)],
         causation_id: causationId,
-        payload,
+        payload: sanitizePayload(payload, this.repo),
         source,
         created_at: createdAt,
       };
