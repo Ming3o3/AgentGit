@@ -26,7 +26,7 @@ test('exposes durable messaging through MCP stdio', async () => {
     await client.connect(transport);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name), [
-      'send_message', 'read_inbox', 'acknowledge_message', 'get_event', 'verify_history', 'task_history', 'create_checkpoint',
+      'send_message', 'read_inbox', 'acknowledge_message', 'get_event', 'verify_history', 'rebuild_task_projection', 'task_history', 'create_checkpoint',
       'create_task', 'assign_task', 'update_task_status', 'list_tasks',
     ]);
     const sent = await client.callTool({ name: 'send_message', arguments: { to: ['reviewer'], text: 'Please review checkpoint c1', task_id: 'task-1', references: ['checkpoint:c1'] } });
@@ -46,6 +46,8 @@ test('exposes durable messaging through MCP stdio', async () => {
     await client.callTool({ name: 'update_task_status', arguments: { task_id: task.id, status: 'in_progress' } });
     const tasksResult = await client.callTool({ name: 'list_tasks', arguments: { status: 'in_progress' } });
     assert.equal(JSON.parse(tasksResult.content[0].text)[0].id, task.id);
+    const rebuilt = await client.callTool({ name: 'rebuild_task_projection', arguments: {} });
+    assert.equal(JSON.parse(rebuilt.content[0].text).events, 3);
     await ackClient.connect(ackTransport);
     const reviewerInbox = await ackClient.callTool({ name: 'read_inbox', arguments: {} });
     const received = JSON.parse(reviewerInbox.content[0].text)[0];

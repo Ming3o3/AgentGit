@@ -80,6 +80,13 @@ server.registerTool('verify_history', {
   annotations: { readOnlyHint: true },
 }, async () => result(store.verifyAll()));
 
+server.registerTool('rebuild_task_projection', {
+  title: 'Rebuild task projection',
+  description: 'Rebuild the mutable task-state projection from immutable task events. Does not modify event history, message delivery state, refs, or Git.',
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false },
+}, async () => result({ events: store.rebuildTaskProjection() }));
+
 server.registerTool('task_history', {
   title: 'Read task history',
   description: 'Read the chronological immutable event history for a task.',

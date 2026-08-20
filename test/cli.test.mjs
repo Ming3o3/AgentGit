@@ -23,6 +23,7 @@ test('CLI creates, assigns, and advances a task', () => {
   const started = JSON.parse(cli(['task-status', '--repo', repo, '--agent', 'coder', '--task', taskId, '--status', 'in_progress']));
   assert.equal(started.task.status, 'in_progress');
   assert.equal(JSON.parse(cli(['tasks', '--repo', repo, '--agent', 'coder']))[0].id, taskId);
+  assert.equal(JSON.parse(cli(['rebuild-tasks', '--repo', repo])).events, 3);
 });
 
 test('CLI receives messages and supports non-mutating inbox inspection', () => {

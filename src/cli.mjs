@@ -24,6 +24,7 @@ function usage() {
   agentgit task-assign --repo <repo> --agent <id> --task <id> --to <agent-id> [--note <text>]
   agentgit task-status --repo <repo> --agent <id> --task <id> --status <status> [--summary <text>]
   agentgit tasks --repo <repo> [--agent <id>] [--status <status>]
+  agentgit rebuild-tasks --repo <repo>
   agentgit serve --repo <repo> [--host <host>] [--port <port>]
   agentgit verify --repo <repo> <event-id>
   agentgit verify --repo <repo> --all`);
@@ -159,6 +160,11 @@ try {
     if (!options.repo) usage();
     const store = new EventStore(options.repo);
     try { print(store.listTasks({ assigneeId: options.agent ?? null, status: options.status ?? null, limit: Number(options.limit ?? 100) })); }
+    finally { store.close(); }
+  } else if (command === 'rebuild-tasks') {
+    if (!options.repo) usage();
+    const store = new EventStore(options.repo);
+    try { print({ events: store.rebuildTaskProjection() }); }
     finally { store.close(); }
   } else if (command === 'serve') {
     if (!options.repo) usage();

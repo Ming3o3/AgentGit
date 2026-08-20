@@ -155,6 +155,17 @@ node src/cli.mjs tasks --repo /absolute/path/to/project --agent coder
 The same operations are available through MCP as `create_task`, `assign_task`,
 `update_task_status`, and `list_tasks`.
 
+If an integrity audit reports task-projection drift, rebuild the mutable
+`tasks` table from immutable task events without changing event history,
+messages, refs, or Git state:
+
+```sh
+node src/cli.mjs rebuild-tasks --repo /absolute/path/to/project
+```
+
+Configured agents can perform the same scoped recovery with the
+`rebuild_task_projection` MCP tool.
+
 ## Local Dashboard
 
 AgentGit includes a local, read-only operational dashboard for task state,
