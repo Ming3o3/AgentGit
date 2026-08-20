@@ -301,7 +301,7 @@ export class EventStore {
 
   append(input) {
     const transaction = this.database.transaction(() => this.#insertEvent(input));
-    return transaction();
+    return transaction.immediate();
   }
 
   createTask({ createdBy, title, description = '', priority = 'normal', sessionId = null }) {
@@ -377,13 +377,15 @@ export class EventStore {
     const transaction = this.database.transaction(() => {
       this.database.prepare('DELETE FROM tasks').run();
       const rows = this.database.prepare(`
-        SELECT * FROM events WHERE type IN ('task.created', 'task.assigned', 'task.status_changed')
-      `).all().map((row) => this.#hydrate(row));
+        SELECT events.*, event_order.sequence AS event_sequence
+        FROM events JOIN event_order ON event_order.event_id = events.id
+        WHERE type IN ('task.created', 'task.assigned', 'task.status_changed')
+      `).all().map((row) => ({ ...this.#hydrate(row), eventSequence: row.event_sequence }));
       const pending = new Map(rows.map((event) => [event.id, event]));
       while (pending.size > 0) {
         const ready = [...pending.values()].filter((event) => event.parents.every((parent) => !pending.has(parent)));
         if (ready.length === 0) throw new Error('task event history has a causal cycle');
-        ready.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+        ready.sort((left, right) => left.eventSequence - right.eventSequence);
         for (const event of ready) {
           this.#projectTaskEvent(event);
           pending.delete(event.id);
@@ -391,7 +393,7 @@ export class EventStore {
       }
       return rows.length;
     });
-    return transaction();
+    return transaction.immediate();
   }
 
   importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path.resolve(filePath)}`, adapter }) {
@@ -433,7 +435,7 @@ export class EventStore {
       }
       return { imported, skipped, offset };
     });
-    return transaction();
+    return transaction.immediate();
   }
 
   sendMessage({ from, to, text, subject = null, taskId = null, sessionId = null, ref = null, references = [] }) {
@@ -458,7 +460,7 @@ export class EventStore {
       for (const recipient of cleanedRecipients) insert.run(event.id, recipient, event.createdAt);
       return event;
     });
-    return transaction();
+    return transaction.immediate();
   }
 
   inbox({ agentId, status = null, limit = 100 } = {}) {
@@ -509,7 +511,7 @@ export class EventStore {
         };
       });
     });
-    return transaction();
+    return transaction.immediate();
   }
 
   markDelivered(eventId, recipientId) {

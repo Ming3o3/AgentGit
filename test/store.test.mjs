@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { initRepository, EventStore } from '../src/store.mjs';
 
 function tempRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agentgit-'));
+}
+
+function appendFromProcess({ worker, repo, agentId }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [worker, repo, agentId], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(JSON.parse(stdout));
+      else reject(new Error(`worker failed (${code}): ${stderr}`));
+    });
+  });
 }
 
 test('initializes a repository and appends a hash-addressed event', () => {
@@ -67,6 +84,30 @@ test('keeps a stable insertion order when events share a timestamp', () => {
   const third = store.append({ agentId: 'coder', type: 'tool.completed', payload: {}, createdAt });
   assert.deepEqual(store.list().map((event) => event.id), [first.id, second.id, third.id]);
   assert.deepEqual(store.recentEvents().map((event) => event.id), [third.id, second.id, first.id]);
+  store.close();
+});
+
+test('serializes concurrent appends to one ref into a causal chain', async () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const worker = path.join(repo, 'append-worker.mjs');
+  const storeUrl = pathToFileURL(path.resolve('src/store.mjs')).href;
+  fs.writeFileSync(worker, `import { EventStore } from ${JSON.stringify(storeUrl)};
+const store = new EventStore(process.argv[2]);
+const event = store.append({ agentId: process.argv[3], type: 'note.recorded', payload: {}, ref: 'main' });
+store.close();
+process.stdout.write(JSON.stringify(event));
+`);
+  const events = await Promise.all(Array.from({ length: 8 }, (_, index) => appendFromProcess({
+    worker, repo, agentId: `agent-${index}`,
+  })));
+  const store = new EventStore(repo);
+  const history = store.list({ ref: 'main', limit: 20 });
+  assert.equal(history.length, events.length);
+  assert.deepEqual(history[0].parents, []);
+  for (let index = 1; index < history.length; index += 1) {
+    assert.deepEqual(history[index].parents, [history[index - 1].id]);
+  }
   store.close();
 });
 

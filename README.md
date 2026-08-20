@@ -108,6 +108,9 @@ inbox without changing delivery state.
 Each event is also assigned a local monotonic sequence in a rebuildable
 projection. This makes timelines and inboxes deterministic even when multiple
 events share the same timestamp, without changing the immutable event hash.
+Writes take the SQLite write lock before resolving a ref head, so concurrent
+agents append to one ref as a single causal chain rather than racing to replace
+the head.
 
 Audit the whole local history at any time. It is read-only and checks event
 hashes, DAG links, refs, delivery rows, content-addressed objects, ordering,
