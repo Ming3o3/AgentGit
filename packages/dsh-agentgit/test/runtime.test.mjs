@@ -48,6 +48,24 @@ test('registers Harness tools and imports session events idempotently', async ()
   for (const dispose of effects) dispose?.();
 });
 
+test('captureSessionEvents disables disposed-session records as well', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-agentgit-session-toggle-'));
+  const listeners = new Map();
+  const effects = [];
+  const ctx = {
+    tools: { register() { return () => {}; } },
+    on(eventName, listener) { listeners.set(eventName, listener); return () => listeners.delete(eventName); },
+    effect(setup) { effects.push(setup()); },
+  };
+  apply(ctx, { repo, agentId: 'coder', captureSessionEvents: false, captureToolResults: false });
+  assert.equal(listeners.has('session/event'), false);
+  assert.equal(listeners.has('session/disposed'), false);
+  const store = new EventStore(repo);
+  assert.deepEqual(store.list({ limit: 10 }), []);
+  store.close();
+  for (const dispose of effects) dispose?.();
+});
+
 test('Harness tool execution writes AgentGit task events', async () => {
   const { repo, tools, effects } = fixture();
   const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');

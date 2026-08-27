@@ -1442,16 +1442,18 @@ function apply(ctx, config) {
       });
     });
   }
-  ctx.on("session/disposed", (session) => {
-    store.append({
-      agentId: config.agentId,
-      type: "session.disposed",
-      sessionId: sessionIdOf(session),
-      ref: `agent/${config.agentId}`,
-      payload: { sessionId: sessionIdOf(session) },
-      source: { adapter: "deepseek-harness", event: "session/disposed" }
+  if (config.captureSessionEvents) {
+    ctx.on("session/disposed", (session) => {
+      store.append({
+        agentId: config.agentId,
+        type: "session.disposed",
+        sessionId: sessionIdOf(session),
+        ref: `agent/${config.agentId}`,
+        payload: { sessionId: sessionIdOf(session) },
+        source: { adapter: "deepseek-harness", event: "session/disposed" }
+      });
     });
-  });
+  }
   registerTools(ctx, store, config);
   if (typeof ctx.inject === "function") {
     ctx.inject(["webServer"], (webCtx) => {
