@@ -35,3 +35,23 @@ test('imports complete JSONL lines and resumes from a cursor', () => {
   assert.equal(store.list({ ref: 'session/coder' }).length, 3);
   store.close();
 });
+
+test('restarts a source when a rollout file is truncated', () => {
+  const root = tempDir();
+  const repo = path.join(root, 'repo');
+  const rollout = path.join(root, 'rollout.jsonl');
+  initRepository(repo);
+  fs.writeFileSync(rollout, [
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'old-1' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'old-2' } }),
+  ].join('\n') + '\n');
+  const store = new EventStore(repo);
+  const first = store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:test', adapter: normalizeCodexRecord });
+  assert.equal(first.imported, 2);
+  fs.writeFileSync(rollout, JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'new-1' } }) + '\n');
+  const second = store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:test', adapter: normalizeCodexRecord });
+  assert.deepEqual(second, { imported: 1, skipped: 0, offset: fs.statSync(rollout).size });
+  assert.deepEqual(store.list({ limit: 10 }).map((event) => event.payload.text), ['old-1', 'old-2', 'new-1']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});

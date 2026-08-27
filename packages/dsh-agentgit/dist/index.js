@@ -503,11 +503,16 @@ var EventStore = class {
     const absolutePath = path2.resolve(filePath);
     const currentSize = fs2.statSync(absolutePath).size;
     const cursor = this.database.prepare("SELECT byte_offset FROM ingest_cursors WHERE source_key = ?").get(sourceKey);
-    const startOffset = cursor && cursor.byte_offset <= currentSize ? cursor.byte_offset : 0;
+    const rewound = Boolean(cursor && cursor.byte_offset > currentSize);
+    const startOffset = cursor && !rewound ? cursor.byte_offset : 0;
     const bytes = fs2.readFileSync(absolutePath);
     const completeBytes = bytes.subarray(startOffset, bytes.lastIndexOf(10, bytes.length - 1) + 1);
-    if (completeBytes.length === 0) return { imported: 0, skipped: 0, offset: startOffset };
+    if (completeBytes.length === 0 && !rewound) return { imported: 0, skipped: 0, offset: startOffset };
     const transaction = this.database.transaction(() => {
+      if (rewound) {
+        this.database.prepare("DELETE FROM source_events WHERE source_key = ?").run(sourceKey);
+        this.database.prepare("DELETE FROM ingest_cursors WHERE source_key = ?").run(sourceKey);
+      }
       let imported = 0;
       let skipped = 0;
       let offset = startOffset;
