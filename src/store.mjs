@@ -436,10 +436,11 @@ export class EventStore {
     const absolutePath = path.resolve(filePath);
     const currentSize = fs.statSync(absolutePath).size;
     const cursor = this.database.prepare('SELECT byte_offset FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
-    const rewound = Boolean(cursor && cursor.byte_offset > currentSize);
-    const startOffset = cursor && !rewound ? cursor.byte_offset : 0;
     const bytes = fs.readFileSync(absolutePath);
-    const completeBytes = bytes.subarray(startOffset, bytes.lastIndexOf(0x0a, bytes.length - 1) + 1);
+    const completeEnd = bytes.lastIndexOf(0x0a, bytes.length - 1) + 1;
+    const rewound = Boolean(cursor && (cursor.byte_offset > currentSize || completeEnd < cursor.byte_offset));
+    const startOffset = cursor && !rewound ? cursor.byte_offset : 0;
+    const completeBytes = bytes.subarray(startOffset, completeEnd);
     if (completeBytes.length === 0 && !rewound) return { imported: 0, skipped: 0, offset: startOffset };
     const transaction = this.database.transaction(() => {
       if (rewound) {

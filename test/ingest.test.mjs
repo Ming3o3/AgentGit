@@ -55,3 +55,23 @@ test('restarts a source when a rollout file is truncated', () => {
   assert.equal(store.verifyAll().valid, true);
   store.close();
 });
+
+test('restarts a source when valid lines move backward despite a larger file', () => {
+  const root = tempDir();
+  const repo = path.join(root, 'repo');
+  const rollout = path.join(root, 'rollout.jsonl');
+  initRepository(repo);
+  fs.writeFileSync(rollout, [
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'old-1' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'old-2' } }),
+  ].join('\n') + '\n');
+  const store = new EventStore(repo);
+  const first = store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:larger-rewrite', adapter: normalizeCodexRecord });
+  assert.equal(first.imported, 2);
+  fs.writeFileSync(rollout, `${JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'new-1' } })}\n${'partial-data-that-is-longer-than-the-old-tail'.repeat(10)}`);
+  const second = store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:larger-rewrite', adapter: normalizeCodexRecord });
+  assert.equal(second.imported, 1);
+  assert.deepEqual(store.list({ limit: 10 }).map((event) => event.payload.text), ['old-1', 'old-2', 'new-1']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
