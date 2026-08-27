@@ -416,6 +416,39 @@ var EventStore = class {
     });
     return { task: this.getTask(taskId), event };
   }
+  updateTask({ taskId, updatedBy, assigneeId = null, note = null, status = null, summary = null }) {
+    if (!updatedBy?.trim()) throw new Error("updatedBy is required");
+    if (assigneeId !== null && !assigneeId?.trim()) throw new Error("assigneeId is required");
+    if (status !== null && !TASK_STATUSES.has(status)) throw new Error(`invalid task status: ${status}`);
+    if (summary !== null && typeof summary !== "string") throw new Error("summary must be a string or null");
+    const transaction = this.database.transaction(() => {
+      let task = this.getTask(taskId);
+      if (!task) throw new Error(`task does not exist: ${taskId}`);
+      if (assigneeId !== null) {
+        if (task.status === "completed" || task.status === "cancelled") throw new Error(`cannot assign a ${task.status} task`);
+        this.#insertEvent({
+          agentId: updatedBy,
+          type: "task.assigned",
+          taskId,
+          ref: `task/${taskId}`,
+          payload: { assigneeId: assigneeId.trim(), note }
+        });
+        task = this.getTask(taskId);
+      }
+      if (status !== null) {
+        this.#assertTaskTransition(task.status, status);
+        this.#insertEvent({
+          agentId: updatedBy,
+          type: "task.status_changed",
+          taskId,
+          ref: `task/${taskId}`,
+          payload: { status, summary }
+        });
+      }
+      return this.getTask(taskId);
+    });
+    return transaction.immediate();
+  }
   getTask(taskId) {
     const row = this.database.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId);
     return row ? this.#hydrateTask(row) : null;
@@ -1337,25 +1370,15 @@ function registerTools(ctx, store, config) {
       summary: stringParameter(false, "Status transition summary.")
     },
     async execute(args) {
-      let result = null;
-      if (args.assigneeId) {
-        result = store.assignTask({
-          taskId: args.taskId,
-          assignedBy: config.agentId,
-          assigneeId: args.assigneeId,
-          note: args.note ?? null
-        });
-      }
-      if (args.status) {
-        result = store.updateTaskStatus({
-          taskId: args.taskId,
-          updatedBy: config.agentId,
-          status: args.status,
-          summary: args.summary ?? null
-        });
-      }
-      if (!result) throw new Error("agentgit_update_task requires assigneeId or status");
-      return result;
+      if (!args.assigneeId && !args.status) throw new Error("agentgit_update_task requires assigneeId or status");
+      return store.updateTask({
+        taskId: args.taskId,
+        updatedBy: config.agentId,
+        assigneeId: args.assigneeId ?? null,
+        note: args.note ?? null,
+        status: args.status ?? null,
+        summary: args.summary ?? null
+      });
     }
   });
   arrayTool(ctx, {

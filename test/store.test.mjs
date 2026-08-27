@@ -72,6 +72,35 @@ test('does not treat ordinary hash fields as AgentGit object references', () => 
   store.close();
 });
 
+test('updates assignment and status atomically', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const created = store.createTask({ createdBy: 'planner', title: 'Atomic task' });
+  const updated = store.updateTask({ taskId: created.task.id, updatedBy: 'planner', assigneeId: 'coder', status: 'in_progress' });
+  assert.equal(updated.status, 'in_progress');
+  assert.equal(updated.assigneeId, 'coder');
+  assert.deepEqual(store.list({ taskId: created.task.id }).map((event) => event.type), ['task.created', 'task.assigned', 'task.status_changed']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
+
+test('rolls back assignment when the combined status update is invalid', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const created = store.createTask({ createdBy: 'planner', title: 'Atomic failure' });
+  assert.throws(
+    () => store.updateTask({ taskId: created.task.id, updatedBy: 'planner', assigneeId: 'coder', status: 'completed' }),
+    /invalid task transition: assigned -> completed/,
+  );
+  assert.equal(store.getTask(created.task.id).status, 'open');
+  assert.equal(store.getTask(created.task.id).assigneeId, null);
+  assert.deepEqual(store.list({ taskId: created.task.id }).map((event) => event.type), ['task.created']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
+
 test('uses the ref head as the next parent and returns branch history', () => {
   const repo = tempRepo();
   initRepository(repo);

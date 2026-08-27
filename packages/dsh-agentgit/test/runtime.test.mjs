@@ -100,6 +100,24 @@ test('Harness tool execution writes AgentGit task events', async () => {
   for (const dispose of effects) dispose?.();
 });
 
+test('combined Harness task updates are atomic', async () => {
+  const { repo, tools, effects } = fixture();
+  const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
+  const updateTask = tools.find((tool) => tool.name === 'agentgit_update_task');
+  const created = JSON.parse(await createTask.execute({ title: 'Atomic Harness task' }));
+  const taskId = created.task.id;
+  await assert.rejects(
+    () => updateTask.execute({ taskId, assigneeId: 'coder', status: 'completed' }),
+    /invalid task transition: assigned -> completed/,
+  );
+  const store = new EventStore(repo);
+  assert.equal(store.getTask(taskId).status, 'open');
+  assert.equal(store.getTask(taskId).assigneeId, null);
+  assert.deepEqual(store.list({ taskId }).map((event) => event.type), ['task.created']);
+  store.close();
+  for (const dispose of effects) dispose?.();
+});
+
 test('loads as a real Cordis plugin and executes through the Harness registry', async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-agentgit-cordis-'));
   const root = new Context();
