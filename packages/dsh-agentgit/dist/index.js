@@ -1063,18 +1063,24 @@ function gitState(repo) {
 }
 function createCheckpoint({ repo, store, agentId, summary, taskId = null, sessionId = null, ref = null, commit = false }) {
   if (typeof summary !== "string" || !summary.trim()) throw new Error("checkpoint summary is required");
+  let committed = false;
   if (commit) {
-    git(repo, ["add", "--all"]);
-    const before = tryGit(repo, ["rev-parse", "HEAD"]);
-    try {
-      git(repo, ["commit", "-m", summary]);
-    } catch (error) {
-      const after = tryGit(repo, ["rev-parse", "HEAD"]);
-      if (after === before) throw new Error(`Git commit failed: ${error.stderr?.toString().trim() || error.message}`);
+    const beforeState = gitState(repo);
+    if (beforeState.status.length > 0) {
+      git(repo, ["add", "--all"]);
+      const before = beforeState.head;
+      try {
+        git(repo, ["commit", "-m", summary]);
+        committed = true;
+      } catch (error) {
+        const after = tryGit(repo, ["rev-parse", "HEAD"]);
+        if (after === before) throw new Error(`Git commit failed: ${error.stderr?.toString().trim() || error.message}`);
+        committed = true;
+      }
     }
   }
   const state = gitState(repo);
-  const commitPatch = commit && state.head ? git(repo, ["show", "--format=", "--binary", "--no-ext-diff", state.head, "--", ...WORKTREE_PATHS]) : "";
+  const commitPatch = committed && state.head ? git(repo, ["show", "--format=", "--binary", "--no-ext-diff", state.head, "--", ...WORKTREE_PATHS]) : "";
   const patch = commitPatch || [
     state.stagedDiff && `# staged
 ${state.stagedDiff}`,
@@ -1097,7 +1103,7 @@ ${state.unstagedDiff}`
         status: state.status
       },
       diff,
-      committed: commit
+      committed
     }
   });
 }
