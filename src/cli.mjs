@@ -46,6 +46,18 @@ function print(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function integerOption(options, name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (options[name] === undefined) return fallback;
+  if (options[name] === true) {
+    throw new Error(`--${name.replaceAll('_', '-')} requires an integer value`);
+  }
+  const value = Number(options[name]);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`--${name.replaceAll('_', '-')} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
 const command = process.argv[2];
 const options = args(process.argv.slice(3));
 
@@ -69,7 +81,7 @@ try {
   } else if (command === 'log') {
     if (!options.repo) usage();
     const store = new EventStore(options.repo);
-    try { print(store.list({ ref: options.ref, taskId: options.task, agentId: options.agent, type: options.type, limit: Number(options.limit ?? 100) })); }
+    try { print(store.list({ ref: options.ref, taskId: options.task, agentId: options.agent, type: options.type, limit: integerOption(options, 'limit', 100) })); }
     finally { store.close(); }
   } else if (command === 'show') {
     if (!options.repo || !options._[0]) usage();
@@ -101,7 +113,7 @@ try {
     if (!options.repo || !options.agent) usage();
     const store = new EventStore(options.repo);
     try {
-      const input = { agentId: options.agent, status: options.status ?? null, limit: Number(options.limit ?? 100) };
+      const input = { agentId: options.agent, status: options.status ?? null, limit: integerOption(options, 'limit', 100) };
       print(options.peek === true ? store.inbox(input) : store.receiveInbox(input));
     }
     finally { store.close(); }
@@ -119,7 +131,7 @@ try {
   } else if (command === 'watch-codex') {
     if (!options.repo || !options.dir || !options.agent) usage();
     const store = new EventStore(options.repo);
-    const intervalMs = Number(options.interval ?? 1000);
+    const intervalMs = integerOption(options, 'interval', 1000, { min: 50 });
     const controller = new AbortController();
     const stop = () => controller.abort();
     process.once('SIGINT', stop);
@@ -159,7 +171,7 @@ try {
   } else if (command === 'tasks') {
     if (!options.repo) usage();
     const store = new EventStore(options.repo);
-    try { print(store.listTasks({ assigneeId: options.agent ?? null, status: options.status ?? null, limit: Number(options.limit ?? 100) })); }
+    try { print(store.listTasks({ assigneeId: options.agent ?? null, status: options.status ?? null, limit: integerOption(options, 'limit', 100) })); }
     finally { store.close(); }
   } else if (command === 'rebuild-tasks') {
     if (!options.repo) usage();
@@ -172,7 +184,7 @@ try {
     const stop = () => controller.abort();
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
-    const dashboard = await startDashboard({ repo: options.repo, host: options.host ?? '127.0.0.1', port: Number(options.port ?? 3210) });
+    const dashboard = await startDashboard({ repo: options.repo, host: options.host ?? '127.0.0.1', port: integerOption(options, 'port', 3210, { min: 0, max: 65535 }) });
     console.log(dashboard.url);
     try {
       await new Promise((resolve) => controller.signal.addEventListener('abort', resolve, { once: true }));

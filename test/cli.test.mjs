@@ -13,6 +13,15 @@ function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 }
 
+function failingCli(args) {
+  try {
+    cli(args);
+    assert.fail('expected CLI to fail');
+  } catch (error) {
+    return error;
+  }
+}
+
 test('CLI creates, assigns, and advances a task', () => {
   const repo = tempRepo();
   cli(['init', repo]);
@@ -64,4 +73,13 @@ test('CLI recognizes terminal --commit and --once flags', () => {
   fs.writeFileSync(path.join(sessions, 'rollout-demo.jsonl'), JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'hello' } }) + '\n');
   const result = JSON.parse(cli(['watch-codex', '--repo', repo, '--dir', sessions, '--agent', 'coder', '--once']));
   assert.equal(result.imported, 1);
+});
+
+test('CLI rejects invalid numeric options with actionable errors', () => {
+  const repo = tempRepo();
+  cli(['init', repo]);
+  assert.match(failingCli(['log', '--repo', repo, '--limit', 'nope']).stderr, /--limit must be an integer/);
+  assert.match(failingCli(['inbox', '--repo', repo, '--agent', 'coder', '--limit', '0']).stderr, /--limit must be an integer/);
+  assert.match(failingCli(['watch-codex', '--repo', repo, '--dir', repo, '--agent', 'coder', '--interval', '10', '--once']).stderr, /--interval must be an integer/);
+  assert.match(failingCli(['serve', '--repo', repo, '--port', '70000']).stderr, /--port must be an integer/);
 });
