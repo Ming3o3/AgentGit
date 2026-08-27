@@ -66,6 +66,28 @@ test('captureSessionEvents disables disposed-session records as well', () => {
   for (const dispose of effects) dispose?.();
 });
 
+test('captures Harness tool results with execution identity and content', () => {
+  const { repo, listeners, effects } = fixture();
+  listeners.get('tools/result')(
+    Object.freeze({ callId: 'call-1', name: 'agentgit_create_task', sessionId: 'session-1', arguments: { title: 'Captured' } }),
+    Object.freeze({ content: Object.freeze([{ type: 'text', text: '{"ok":true}' }]), meta: { durationMs: 12 } }),
+  );
+  const store = new EventStore(repo);
+  const events = store.list({ type: 'tool.runtime_result', limit: 10 });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].payload, {
+    callId: 'call-1',
+    name: 'agentgit_create_task',
+    arguments: { title: 'Captured' },
+    content: [{ type: 'text', text: '{"ok":true}' }],
+    meta: { durationMs: 12 },
+  });
+  assert.equal(events[0].sessionId, 'session-1');
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+  for (const dispose of effects) dispose?.();
+});
+
 test('Harness tool execution writes AgentGit task events', async () => {
   const { repo, tools, effects } = fixture();
   const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
