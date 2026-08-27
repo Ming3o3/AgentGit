@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initRepository, EventStore } from '../src/store.mjs';
-import { createCheckpoint } from '../src/git.mjs';
+import { createCheckpoint, gitState } from '../src/git.mjs';
 import { readObject } from '../src/objects.mjs';
 
 function shell(repo, args) {
@@ -63,4 +63,12 @@ test('records a clean checkpoint when commit is requested without changes', () =
   assert.equal(readObject(repo, checkpoint.payload.diff.hash).toString(), '');
   assert.equal(shell(repo, ['log', '-1', '--format=%s']), 'initial');
   store.close();
+});
+
+test('preserves rename source in the Git status checkpoint', () => {
+  const repo = gitRepo();
+  initRepository(repo);
+  shell(repo, ['mv', 'README.md', 'README-renamed.md']);
+  const state = gitState(repo);
+  assert.deepEqual(state.status, [{ code: 'R ', path: 'README-renamed.md', originalPath: 'README.md' }]);
 });

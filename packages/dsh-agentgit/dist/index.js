@@ -1041,7 +1041,19 @@ function tryGit(repo, args) {
 }
 function statusEntries(status) {
   if (!status) return [];
-  return status.split("\0").filter(Boolean).map((entry) => ({ code: entry.slice(0, 2), path: entry.slice(3) }));
+  const entries = status.split("\0").filter(Boolean);
+  const result = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const code = entry.slice(0, 2);
+    const item = { code, path: entry.slice(3) };
+    if (code.includes("R") || code.includes("C")) {
+      item.originalPath = entries[index + 1] ?? null;
+      index += 1;
+    }
+    result.push(item);
+  }
+  return result;
 }
 function gitState(repo) {
   if (tryGit(repo, ["rev-parse", "--is-inside-work-tree"]) !== "true") {
