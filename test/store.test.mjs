@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import Database from 'better-sqlite3';
 import { initRepository, EventStore } from '../src/store.mjs';
+import { canonicalJson, sha256 } from '../src/canonical-json.mjs';
 
 function tempRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agentgit-'));
@@ -43,6 +45,56 @@ test('initializes a repository and appends a hash-addressed event', () => {
   assert.equal(store.get(event.id).contentHash, event.contentHash);
   assert.equal(store.verify(event.id).valid, true);
   assert.deepEqual(store.refs(), [{ name: 'task/task-1', event_id: event.id, updated_at: store.refs()[0].updated_at }]);
+  store.close();
+});
+
+test('upgrades a schema v1 database without losing existing events', () => {
+  const repo = tempRepo();
+  const directory = path.join(repo, '.agentgit');
+  fs.mkdirSync(directory, { recursive: true });
+  const database = new Database(path.join(directory, 'events.db'));
+  database.exec(`
+    CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE events (
+      id TEXT PRIMARY KEY, task_id TEXT, session_id TEXT, agent_id TEXT NOT NULL,
+      type TEXT NOT NULL, parents_json TEXT NOT NULL, causation_id TEXT,
+      payload_json TEXT NOT NULL, source_json TEXT, created_at TEXT NOT NULL,
+      content_hash TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE refs (
+      name TEXT PRIMARY KEY, event_id TEXT, updated_at TEXT NOT NULL,
+      FOREIGN KEY (event_id) REFERENCES events(id)
+    );
+    INSERT INTO metadata(key, value) VALUES ('schema_version', '1');
+  `);
+  const existing = {
+    id: 'evt_legacy',
+    task_id: null,
+    session_id: 'legacy-session',
+    agent_id: 'legacy-agent',
+    type: 'note.recorded',
+    parents: [],
+    causation_id: null,
+    payload: { text: 'kept' },
+    source: null,
+    created_at: '2026-08-01T00:00:00.000Z',
+  };
+  database.prepare(`
+    INSERT INTO events(id, task_id, session_id, agent_id, type, parents_json, causation_id,
+      payload_json, source_json, created_at, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(existing.id, existing.task_id, existing.session_id, existing.agent_id, existing.type,
+    canonicalJson(existing.parents), existing.causation_id, canonicalJson(existing.payload),
+    null, existing.created_at, sha256(existing));
+  database.close();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const task = store.createTask({ createdBy: 'planner', title: 'Post-upgrade task' });
+  assert.equal(store.get('evt_legacy').payload.text, 'kept');
+  assert.equal(store.list({ limit: 10 }).length, 2);
+  assert.equal(store.getTask(task.task.id).status, 'open');
+  assert.equal(store.database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, '2');
+  assert.equal(store.verifyAll().valid, true);
   store.close();
 });
 
