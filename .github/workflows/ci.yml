@@ -39,8 +39,11 @@ jobs:
       - name: Build Harness plugin
         run: npm run build:dsh
 
-      - name: Run tests
+      - name: Run core tests
         run: npm test
+
+      - name: Run Harness plugin tests
+        run: npm run test:dsh
 
       - name: Check syntax
         run: npm run lint

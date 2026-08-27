@@ -22,6 +22,14 @@ npm install
 npm test
 ```
 
+The core test command covers AgentGit itself. To develop or verify the
+optional DeepSeek Harness plugin, install its dependencies and run its suite:
+
+```sh
+npm install --prefix packages/dsh-agentgit
+npm run test:dsh
+```
+
 The current implementation requires Node.js 20+ and uses SQLite locally.
 AgentGit writes all state to `<target-project>/.agentgit/`. During `init`, it
 adds `.agentgit/` to that repository's local `.git/info/exclude`, so plugin

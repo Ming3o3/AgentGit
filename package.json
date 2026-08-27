@@ -16,7 +16,8 @@
     "agentgit-mcp": "src/mcp-server.mjs"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test",
+    "test:dsh": "npm test --prefix packages/dsh-agentgit",
     "build:dsh": "npm run build --prefix packages/dsh-agentgit",
     "lint": "node --check src/canonical-json.mjs && node --check src/store.mjs && node --check src/objects.mjs && node --check src/payload.mjs && node --check src/git.mjs && node --check src/watcher.mjs && node --check src/codex-config.mjs && node --check src/dashboard-server.mjs && node --check src/cli.mjs && node --check src/mcp-server.mjs && node --check src/adapters/codex.mjs && node --check packages/dsh-agentgit/src/index.mjs && node --check packages/dsh-agentgit/dist/index.js"
   },
