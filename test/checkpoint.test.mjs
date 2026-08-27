@@ -51,3 +51,16 @@ test('can commit an explicit checkpoint and records the resulting commit', () =>
   assert.equal(shell(repo, ['status', '--short']), '');
   store.close();
 });
+
+test('records a clean checkpoint when commit is requested without changes', () => {
+  const repo = gitRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const checkpoint = createCheckpoint({ repo, store, agentId: 'coder', summary: 'Confirm clean tree', commit: true });
+  assert.equal(checkpoint.type, 'git.checkpoint');
+  assert.equal(checkpoint.payload.committed, false);
+  assert.equal(checkpoint.payload.git.status.length, 0);
+  assert.equal(readObject(repo, checkpoint.payload.diff.hash).toString(), '');
+  assert.equal(shell(repo, ['log', '-1', '--format=%s']), 'initial');
+  store.close();
+});
