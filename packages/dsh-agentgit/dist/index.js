@@ -104,6 +104,7 @@ var TASK_TRANSITIONS = {
   completed: /* @__PURE__ */ new Set(),
   cancelled: /* @__PURE__ */ new Set()
 };
+var MAX_QUERY_LIMIT = 1e4;
 function now() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
@@ -154,6 +155,12 @@ function validObjectReference(reference) {
 }
 function addIssue(issues, issue) {
   if (issues.length < 100) issues.push(issue);
+}
+function validateLimit(limit) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_QUERY_LIMIT) {
+    throw new Error(`limit must be an integer between 1 and ${MAX_QUERY_LIMIT}`);
+  }
+  return limit;
 }
 function expectedTaskProjection(events, addAuditIssue) {
   const tasks = /* @__PURE__ */ new Map();
@@ -463,6 +470,7 @@ var EventStore = class {
   }
   listTasks({ assigneeId = null, status = null, limit = 100 } = {}) {
     if (status !== null && !TASK_STATUSES.has(status)) throw new Error(`invalid task status: ${status}`);
+    validateLimit(limit);
     const clauses = [];
     const values = [];
     if (assigneeId) {
@@ -585,6 +593,7 @@ var EventStore = class {
   inbox({ agentId, status = null, limit = 100 } = {}) {
     if (!agentId?.trim()) throw new Error("agentId is required");
     if (status !== null && !DELIVERY_STATUSES.has(status)) throw new Error(`invalid delivery status: ${status}`);
+    validateLimit(limit);
     const values = [agentId];
     const condition = status ? "AND d.status = ?" : "";
     if (status) values.push(status);
@@ -814,6 +823,7 @@ var EventStore = class {
     return row ? this.#hydrate(row) : null;
   }
   list({ ref = null, taskId = null, agentId = null, type = null, limit = 100 } = {}) {
+    validateLimit(limit);
     const conditions = [];
     const values = [];
     if (ref) {
@@ -853,6 +863,7 @@ var EventStore = class {
     `).all(...values).map((item) => this.#hydrate(item));
   }
   recentEvents({ limit = 200 } = {}) {
+    validateLimit(limit);
     return this.database.prepare(`
       SELECT events.* FROM events JOIN event_order ON event_order.event_id = events.id
       ORDER BY event_order.sequence DESC LIMIT ?

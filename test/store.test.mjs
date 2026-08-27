@@ -124,6 +124,23 @@ test('does not treat ordinary hash fields as AgentGit object references', () => 
   store.close();
 });
 
+test('rejects invalid query limits at the storage boundary', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  for (const query of [
+    () => store.list({ limit: 0 }),
+    () => store.list({ limit: 1.5 }),
+    () => store.list({ limit: Number.POSITIVE_INFINITY }),
+    () => store.recentEvents({ limit: 10001 }),
+    () => store.listTasks({ limit: -1 }),
+    () => store.inbox({ agentId: 'coder', limit: true }),
+  ]) {
+    assert.throws(query, /limit must be an integer between 1 and 10000/);
+  }
+  store.close();
+});
+
 test('updates assignment and status atomically', () => {
   const repo = tempRepo();
   initRepository(repo);
