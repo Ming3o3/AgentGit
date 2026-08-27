@@ -98,6 +98,17 @@ test('upgrades a schema v1 database without losing existing events', () => {
   store.close();
 });
 
+test('rejects a database created by a newer schema version', () => {
+  const repo = tempRepo();
+  const directory = path.join(repo, '.agentgit');
+  fs.mkdirSync(directory, { recursive: true });
+  const database = new Database(path.join(directory, 'events.db'));
+  database.exec('CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+  database.prepare('INSERT INTO metadata(key, value) VALUES (?, ?)').run('schema_version', '999');
+  database.close();
+  assert.throws(() => initRepository(repo), /unsupported AgentGit schema version: 999/);
+});
+
 test('enforces event immutability inside SQLite', () => {
   const repo = tempRepo();
   initRepository(repo);

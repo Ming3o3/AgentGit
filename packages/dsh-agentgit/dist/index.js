@@ -238,6 +238,17 @@ function initRepository(repo) {
   const database = new Database(path2.join(directory, "events.db"));
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
+  const hasMetadata = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get();
+  if (hasMetadata) {
+    const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
+    if (recordedVersion !== void 0) {
+      const parsedVersion = Number(recordedVersion);
+      if (!Number.isInteger(parsedVersion) || parsedVersion > SCHEMA_VERSION) {
+        database.close();
+        throw new Error(`unsupported AgentGit schema version: ${recordedVersion}`);
+      }
+    }
+  }
   database.exec(`
     CREATE TABLE IF NOT EXISTS metadata (
       key TEXT PRIMARY KEY,
