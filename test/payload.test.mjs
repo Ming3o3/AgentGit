@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initRepository, EventStore } from '../src/store.mjs';
-import { readObject } from '../src/objects.mjs';
+import { objectPath, readObject } from '../src/objects.mjs';
 import { redactText } from '../src/payload.mjs';
 
 function tempRepo() { return fs.mkdtempSync(path.join(os.tmpdir(), 'agentgit-payload-')); }
@@ -29,4 +29,11 @@ test('externalizes large payload text to a content-addressed object', () => {
   assert.equal(readObject(repo, output.objectRef).toString(), 'x'.repeat(9000));
   assert.equal(store.get(event.id).payload.output.objectRef, output.objectRef);
   store.close();
+});
+
+test('rejects malformed object references before touching the filesystem', () => {
+  const repo = tempRepo();
+  assert.throws(() => objectPath(repo, '../outside'), /invalid object hash/);
+  assert.throws(() => readObject(repo, 'sha256:../outside'), /invalid object hash/);
+  assert.throws(() => readObject(repo, 'not-a-reference'), /invalid object hash/);
 });

@@ -2,8 +2,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+function normalizeHash(value) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/iu.test(value)) {
+    throw new Error('invalid object hash');
+  }
+  return value.toLowerCase();
+}
+
 export function objectPath(repo, hash) {
-  return path.join(path.resolve(repo), '.agentgit', 'objects', hash.slice(0, 2), hash.slice(2));
+  const normalized = normalizeHash(hash);
+  return path.join(path.resolve(repo), '.agentgit', 'objects', normalized.slice(0, 2), normalized.slice(2));
 }
 
 export function putObject(repo, content) {
@@ -18,6 +26,7 @@ export function putObject(repo, content) {
 }
 
 export function readObject(repo, reference) {
-  const hash = reference.replace(/^sha256:/, '');
+  if (typeof reference !== 'string') throw new Error('invalid object reference');
+  const hash = normalizeHash(reference.replace(/^sha256:/iu, ''));
   return fs.readFileSync(objectPath(repo, hash));
 }
