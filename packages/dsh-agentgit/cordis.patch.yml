@@ -1,0 +1,6 @@
+- insert:
+    - id: agentgit
+      name: dsh-agentgit
+      config:
+        repo: "."
+        agentId: "deepseek"

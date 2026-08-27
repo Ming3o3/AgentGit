@@ -60,6 +60,66 @@ The MCP tools are:
 The included Codex plugin skill at [`skills/agentgit/SKILL.md`](skills/agentgit/SKILL.md)
 describes the intended collaboration workflow once those tools are configured.
 
+## Use as a DeepSeek Harness plugin
+
+`packages/dsh-agentgit` is a native Harness bundle. It registers AgentGit
+tools directly with `ctx.tools`, observes the Harness `session/event` and
+`tools/result` streams, and closes its SQLite connection with the Cordis
+plugin lifecycle. It does not start an MCP subprocess and does not replace the
+Harness agent loop.
+
+Build the self-contained bundle from this checkout:
+
+```sh
+npm install --prefix packages/dsh-agentgit
+npm run build:dsh
+```
+
+For local source development, add a patch overlay to a Harness profile:
+
+```yaml
+- insert:
+    - id: agentgit
+      name: "/absolute/path/to/Lim/packages/dsh-agentgit/src/index.mjs"
+      config:
+        repo: "/absolute/path/to/target-project"
+        agentId: "coder"
+        captureSessionEvents: true
+        captureToolResults: true
+```
+
+For a bundle install, use the package's `cordis.patch.yml` and override the
+same `repo` and `agentId` fields in the profile patch. The plugin exposes
+`agentgit_read_inbox`, `agentgit_send_message`, `agentgit_acknowledge_message`,
+task tools, `agentgit_create_checkpoint`, and `agentgit_verify_history`.
+Harness session events are imported idempotently by `(sessionId, event.seq)`;
+the original event payload remains in AgentGit's immutable event DAG.
+
+With a locally built DeepSeek Harness CLI, the bundle installation flow is:
+
+```sh
+dsh plugin --profile agentgit-dev add ./packages/dsh-agentgit
+```
+
+Then add this profile patch (the patch is deliberately kept outside the
+bundle so each profile can select its own project and agent identity):
+
+```yaml
+- insert:
+    - id: agentgit
+      name: dsh-agentgit
+      config:
+        repo: "/absolute/path/to/target-project"
+        agentId: "coder"
+```
+
+Check the composed Harness configuration before starting it:
+
+```sh
+dsh --profile agentgit-dev --dump-config
+dsh --profile agentgit-dev
+```
+
 ## Observe Codex sessions
 
 Codex keeps explicit session entries in rollout JSONL files. Import a specific

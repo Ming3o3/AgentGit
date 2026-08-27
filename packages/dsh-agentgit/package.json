@@ -1,0 +1,51 @@
+{
+  "name": "dsh-agentgit",
+  "version": "0.1.0",
+  "description": "AgentGit collaboration and immutable event history plugin for DeepSeek Harness",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "default": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist/index.js",
+    "dist/client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:host && npm run build:client",
+    "build:host": "esbuild src/index.mjs --bundle --format=esm --platform=node --packages=external --outfile=dist/index.js",
+    "build:client": "esbuild src/client/index.jsx --bundle --format=cjs --platform=browser --external:react --external:react/jsx-runtime --outfile=dist/client.js --banner:js=\"window.__ModuleLoader__.load({ id: 'dsh-agentgit', factory: (require) => { var module = { exports: {} }; var exports = module.exports;\" --footer:js=\"return module.exports; } });\"",
+    "lint": "node --check src/index.mjs && node --check dist/index.js && node --check dist/client.js",
+    "test": "npm run build && node --test"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.0.1-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.9"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  }
+}
