@@ -63,7 +63,9 @@ function objectReferences(value, references = []) {
     for (const item of value) objectReferences(item, references);
   } else if (value && typeof value === 'object') {
     if (typeof value.objectRef === 'string') references.push({ reference: value.objectRef, bytes: value.bytes });
-    if (typeof value.hash === 'string') references.push({ reference: value.hash, bytes: value.bytes });
+    else if (typeof value.hash === 'string' && Object.hasOwn(value, 'bytes')) {
+      references.push({ reference: value.hash, bytes: value.bytes });
+    }
     for (const item of Object.values(value)) objectReferences(item, references);
   }
   return references;

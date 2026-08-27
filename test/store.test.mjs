@@ -63,6 +63,15 @@ test('enforces event immutability inside SQLite', () => {
   store.close();
 });
 
+test('does not treat ordinary hash fields as AgentGit object references', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  store.append({ agentId: 'coder', type: 'build.completed', payload: { hash: 'git-commit-sha' } });
+  assert.deepEqual(store.verifyAll().issues, []);
+  store.close();
+});
+
 test('uses the ref head as the next parent and returns branch history', () => {
   const repo = tempRepo();
   initRepository(repo);
