@@ -37,6 +37,21 @@ test('ignores hidden directories and non-rollout JSONL files', () => {
   assert.deepEqual(scanCodexRollouts({ root, store: { importJsonl() { throw new Error('should not import'); } }, agentId: 'coder' }), { files: 0, imported: 0, skipped: 0 });
 });
 
+test('keeps scanning when a rollout disappears during import', () => {
+  const root = tempRoot();
+  fs.writeFileSync(path.join(root, 'rollout-disappeared.jsonl'), '{}\n');
+  const files = [];
+  const error = Object.assign(new Error('rollout was rotated'), { code: 'ENOENT' });
+  assert.deepEqual(scanCodexRollouts({
+    root,
+    store: { importJsonl() { throw error; } },
+    agentId: 'coder',
+    onFile(value) { files.push(value); },
+  }), { files: 1, imported: 0, skipped: 0 });
+  assert.equal(files.length, 1);
+  assert.equal(files[0].error, error);
+});
+
 test('stops a long polling interval immediately when aborted', async () => {
   const root = tempRoot();
   const controller = new AbortController();

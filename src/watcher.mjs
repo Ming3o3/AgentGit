@@ -27,19 +27,27 @@ export function scanCodexRollouts({ root, store, agentId, taskId = null, refPref
   let files = 0;
   for (const filePath of rolloutFiles(root)) {
     const sessionId = path.basename(filePath, '.jsonl');
-    const result = store.importJsonl({
-      filePath,
-      sourceKey: `codex:${path.resolve(filePath)}`,
-      agentId,
-      taskId,
-      sessionId,
-      ref: `${refPrefix}/${sessionId}`,
-      adapter: normalizeCodexRecord,
-    });
     files += 1;
-    imported += result.imported;
-    skipped += result.skipped;
-    onFile({ filePath, sessionId, ...result });
+    try {
+      const result = store.importJsonl({
+        filePath,
+        sourceKey: `codex:${path.resolve(filePath)}`,
+        agentId,
+        taskId,
+        sessionId,
+        ref: `${refPrefix}/${sessionId}`,
+        adapter: normalizeCodexRecord,
+      });
+      imported += result.imported;
+      skipped += result.skipped;
+      onFile({ filePath, sessionId, ...result });
+    } catch (error) {
+      // A rollout can disappear between directory enumeration and opening it
+      // while Codex rotates or cleans up sessions. Do not take down the
+      // long-running watcher for that transient race; retain all other errors.
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
+      onFile({ filePath, sessionId, error });
+    }
   }
   return { files, imported, skipped };
 }
