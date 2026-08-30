@@ -134,3 +134,41 @@ test('loads as a real Cordis plugin and executes through the Harness registry', 
   assert.match(result.content[0].text, /Harness task/);
   await root.fiber.dispose();
 });
+
+test('registers and removes the WebServer API route with the Cordis lifecycle', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-agentgit-webserver-lifecycle-'));
+  const routes = new Map();
+  const webServer = {
+    register(route) {
+      assert.equal(route.kind, 'exact');
+      assert.equal(route.path, '/agentgit/api');
+      routes.set(route.path, route);
+      return () => routes.delete(route.path);
+    },
+  };
+  const root = new Context();
+  await root.plugin(SystemPrompt);
+  await root.plugin(ToolRegistry);
+  root.provide('webServer', webServer);
+  const fiber = await root.plugin({ name, Config, inject: ['tools'], apply }, { repo, agentId: 'coder' });
+
+  assert.equal(routes.size, 1);
+  const response = {
+    headers: {},
+    status: null,
+    body: null,
+    setHeader(name, value) { this.headers[name] = value; },
+    writeHead(status, headers) { this.status = status; Object.assign(this.headers, headers); },
+    end(value) { this.body = value; },
+  };
+  await routes.get('/agentgit/api').handler({ method: 'GET', url: '/agentgit/api?limit=1' }, response);
+  assert.equal(response.status, 200);
+  assert.equal(JSON.parse(response.body).summary.events, 0);
+
+  await fiber.dispose();
+  assert.equal(routes.size, 0);
+  const reopened = new EventStore(repo);
+  assert.deepEqual(reopened.list({ limit: 1 }), []);
+  reopened.close();
+  await root.fiber.dispose();
+});
