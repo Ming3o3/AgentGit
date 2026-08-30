@@ -3,6 +3,9 @@
 AgentGit 的 DeepSeek Harness 插件适配层。它把 Harness 的会话事件追加到
 `.agentgit/events.db`，并向模型提供 AgentGit 的消息、任务、检查点和历史审计工具。
 
+插件版本需与 Harness 的运行时匹配。当前 DeepSeek Harness CLI 要求
+Node.js 22.19+；Node.js 20+ 仍可用于独立 AgentGit CLI、MCP server 和本地测试。
+
 ## 本地开发
 
 在仓库根目录执行：

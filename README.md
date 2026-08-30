@@ -35,6 +35,11 @@ AgentGit writes all state to `<target-project>/.agentgit/`. During `init`, it
 adds `.agentgit/` to that repository's local `.git/info/exclude`, so plugin
 data is never staged by AgentGit checkpoints.
 
+The standalone AgentGit CLI, MCP server, and core tests run on Node.js 20+.
+When using the DeepSeek Harness integration, use the Node.js version required
+by the installed Harness release (currently Node.js 22.19+); the Harness CLI
+itself uses newer built-in runtime APIs such as `node:sqlite`.
+
 ## Initialize a target project
 
 Run AgentGit from its source checkout, pointing at the project that agents
