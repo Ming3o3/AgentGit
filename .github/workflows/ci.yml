@@ -45,6 +45,13 @@ jobs:
       - name: Run Harness plugin tests
         run: npm run test:dsh
 
+      - name: Audit root production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Audit Harness plugin production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: packages/dsh-agentgit
+
       - name: Check syntax
         run: npm run lint
 
