@@ -23,6 +23,14 @@ test('redacts credential keys inside JSON-encoded text', () => {
   assert.equal(redacted, '{"apiKey":"[REDACTED]","accessToken":"[REDACTED]"}');
 });
 
+test('fully redacts quoted credentials and authorization headers', () => {
+  assert.equal(redactText('password="secret with spaces"'), 'password="[REDACTED]"');
+  assert.equal(redactText("client_secret: 'another secret'"), "client_secret: '[REDACTED]'");
+  assert.equal(redactText('Authorization: Basic dXNlcjpwYXNzd29yZA=='), 'Authorization: [REDACTED]');
+  assert.equal(redactText('Authorization: Bearer abcdefghijklmnop'), 'Authorization: [REDACTED]');
+  assert.equal(redactText('token=abc123, next=value'), 'token=[REDACTED], next=value');
+});
+
 test('redacts credential-shaped keys in nested structured payloads', () => {
   const repo = tempRepo();
   initRepository(repo);
