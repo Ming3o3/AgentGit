@@ -183,6 +183,17 @@ function addIssue(issues, issue) {
   if (issues.length < 100) issues.push(issue);
 }
 
+function assertSupportedSchema(database) {
+  const hasMetadata = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get();
+  if (!hasMetadata) return;
+  const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
+  if (recordedVersion === undefined) return;
+  const parsedVersion = Number(recordedVersion);
+  if (!Number.isInteger(parsedVersion) || parsedVersion < 0 || parsedVersion > SCHEMA_VERSION) {
+    throw new Error(`unsupported AgentGit schema version: ${recordedVersion}`);
+  }
+}
+
 function validateLimit(limit) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_QUERY_LIMIT) {
     throw new Error(`limit must be an integer between 1 and ${MAX_QUERY_LIMIT}`);
@@ -271,9 +282,11 @@ export function initRepository(repo) {
   database.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
   const currentVersion = recordedVersion === undefined ? 0 : Number(recordedVersion);
-  if (!Number.isInteger(currentVersion) || currentVersion < 0 || currentVersion > SCHEMA_VERSION) {
+  try {
+    assertSupportedSchema(database);
+  } catch (error) {
     database.close();
-    throw new Error(`unsupported AgentGit schema version: ${recordedVersion}`);
+    throw error;
   }
   const migrate = database.transaction(() => {
     for (const migration of SCHEMA_MIGRATIONS) {
@@ -340,7 +353,13 @@ export class EventStore {
     this.database = new Database(repoDbPath(this.repo));
     this.database.pragma('journal_mode = WAL');
     this.database.pragma('foreign_keys = ON');
-    ensureEventOrder(this.database);
+    try {
+      assertSupportedSchema(this.database);
+      ensureEventOrder(this.database);
+    } catch (error) {
+      this.database.close();
+      throw error;
+    }
   }
 
   close() {

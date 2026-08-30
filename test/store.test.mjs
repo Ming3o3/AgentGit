@@ -107,6 +107,7 @@ test('rejects a database created by a newer schema version', () => {
   database.prepare('INSERT INTO metadata(key, value) VALUES (?, ?)').run('schema_version', '999');
   database.close();
   assert.throws(() => initRepository(repo), /unsupported AgentGit schema version: 999/);
+  assert.throws(() => new EventStore(repo), /unsupported AgentGit schema version: 999/);
 });
 
 test('rejects malformed schema metadata before running migrations', () => {
@@ -118,6 +119,7 @@ test('rejects malformed schema metadata before running migrations', () => {
   database.prepare('INSERT INTO metadata(key, value) VALUES (?, ?)').run('schema_version', 'not-a-version');
   database.close();
   assert.throws(() => initRepository(repo), /unsupported AgentGit schema version: not-a-version/);
+  assert.throws(() => new EventStore(repo), /unsupported AgentGit schema version: not-a-version/);
   const reopened = new Database(path.join(directory, 'events.db'));
   assert.equal(reopened.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'").get(), undefined);
   reopened.close();
