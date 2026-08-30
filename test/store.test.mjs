@@ -93,7 +93,7 @@ test('upgrades a schema v1 database without losing existing events', () => {
   assert.equal(store.get('evt_legacy').payload.text, 'kept');
   assert.equal(store.list({ limit: 10 }).length, 2);
   assert.equal(store.getTask(task.task.id).status, 'open');
-  assert.equal(store.database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, '2');
+  assert.equal(store.database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value, '3');
   assert.equal(store.verifyAll().valid, true);
   store.close();
 });

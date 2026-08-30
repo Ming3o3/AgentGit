@@ -75,3 +75,19 @@ test('restarts a source when valid lines move backward despite a larger file', (
   assert.equal(store.verifyAll().valid, true);
   store.close();
 });
+
+test('restarts a source when a rollout prefix is rewritten at the same length', () => {
+  const root = tempDir();
+  const repo = path.join(root, 'repo');
+  const rollout = path.join(root, 'rollout.jsonl');
+  initRepository(repo);
+  const line = (message) => JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message } }) + '\n';
+  fs.writeFileSync(rollout, line('old-1') + line('old-2'));
+  const store = new EventStore(repo);
+  assert.equal(store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:rewrite', adapter: normalizeCodexRecord }).imported, 2);
+  fs.writeFileSync(rollout, line('new-1') + line('new-2'));
+  assert.equal(store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:rewrite', adapter: normalizeCodexRecord }).imported, 2);
+  assert.deepEqual(store.list({ limit: 10 }).map((event) => event.payload.text), ['old-1', 'old-2', 'new-1', 'new-2']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});

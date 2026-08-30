@@ -7,7 +7,7 @@ import { readObject } from './objects.mjs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from './canonical-json.mjs';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const TASK_STATUSES = new Set(['open', 'assigned', 'in_progress', 'blocked', 'completed', 'cancelled']);
 const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
 const DELIVERY_STATUSES = new Set(['pending', 'delivered', 'acknowledged']);
@@ -113,6 +113,13 @@ const SCHEMA_MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS deliveries_recipient_status ON deliveries(recipient_id, status, created_at);
         CREATE INDEX IF NOT EXISTS tasks_assignee_status ON tasks(assignee_id, status, updated_at);
       `);
+    },
+  },
+  {
+    version: 3,
+    name: 'cursor-prefix-fingerprints',
+    apply(database) {
+      database.exec('ALTER TABLE ingest_cursors ADD COLUMN prefix_hash TEXT');
     },
   },
 ];
@@ -475,10 +482,17 @@ export class EventStore {
   importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path.resolve(filePath)}`, adapter }) {
     const absolutePath = path.resolve(filePath);
     const currentSize = fs.statSync(absolutePath).size;
-    const cursor = this.database.prepare('SELECT byte_offset FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
+    const cursor = this.database.prepare('SELECT byte_offset, prefix_hash FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
     const bytes = fs.readFileSync(absolutePath);
     const completeEnd = bytes.lastIndexOf(0x0a, bytes.length - 1) + 1;
-    const rewound = Boolean(cursor && (cursor.byte_offset > currentSize || completeEnd < cursor.byte_offset));
+    const currentPrefixHash = cursor?.prefix_hash && cursor.byte_offset <= bytes.length
+      ? crypto.createHash('sha256').update(bytes.subarray(0, cursor.byte_offset)).digest('hex')
+      : null;
+    const rewound = Boolean(cursor && (
+      cursor.byte_offset > currentSize
+      || completeEnd < cursor.byte_offset
+      || (cursor.prefix_hash && currentPrefixHash !== cursor.prefix_hash)
+    ));
     const startOffset = cursor && !rewound ? cursor.byte_offset : 0;
     const completeBytes = bytes.subarray(startOffset, completeEnd);
     if (completeBytes.length === 0 && !rewound) return { imported: 0, skipped: 0, offset: startOffset };
@@ -490,13 +504,16 @@ export class EventStore {
       let imported = 0;
       let skipped = 0;
       let offset = startOffset;
+      const prefixHasher = crypto.createHash('sha256').update(bytes.subarray(0, startOffset));
+      const prefixHash = () => prefixHasher.copy().digest('hex');
       for (const lineBytes of completeBytes.toString('utf8').split('\n').slice(0, -1)) {
         const lineStart = offset;
         offset += Buffer.byteLength(`${lineBytes}\n`);
+        prefixHasher.update(bytes.subarray(lineStart, offset));
         let raw;
-        try { raw = JSON.parse(lineBytes); } catch { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset); continue; }
+        try { raw = JSON.parse(lineBytes); } catch { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset, prefixHash()); continue; }
         const normalized = adapter(raw);
-        if (!normalized) { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset); continue; }
+        if (!normalized) { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset, prefixHash()); continue; }
         this.#insertEvent({
           agentId,
           type: normalized.type,
@@ -511,7 +528,7 @@ export class EventStore {
             rawType: raw.type ?? null,
             payloadType: raw.payload?.type ?? null,
           },
-          ingest: { sourceKey, sourceOffset: lineStart, filePath: absolutePath, nextOffset: offset },
+          ingest: { sourceKey, sourceOffset: lineStart, filePath: absolutePath, nextOffset: offset, prefixHash: prefixHash() },
         });
         imported += 1;
       }
@@ -655,7 +672,7 @@ export class EventStore {
       const existing = this.database.prepare('SELECT event_id FROM source_events WHERE source_key = ? AND source_offset = ?')
         .get(ingest.sourceKey, ingest.sourceOffset);
       if (existing) {
-        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset);
+        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset, ingest.prefixHash);
         return this.get(existing.event_id);
       }
     }
@@ -731,7 +748,7 @@ export class EventStore {
       if (ingest) {
         this.database.prepare('INSERT INTO source_events(source_key, source_offset, event_id) VALUES (?, ?, ?)')
           .run(ingest.sourceKey, ingest.sourceOffset, event.id);
-        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset);
+        this.#advanceCursor(ingest.sourceKey, ingest.filePath, ingest.nextOffset, ingest.prefixHash);
       }
       return result;
     }
@@ -781,12 +798,13 @@ export class EventStore {
     if (!TASK_TRANSITIONS[current]?.has(next)) throw new Error(`invalid task transition: ${current} -> ${next}`);
   }
 
-  #advanceCursor(sourceKey, filePath, byteOffset) {
+  #advanceCursor(sourceKey, filePath, byteOffset, prefixHash = null) {
     this.database.prepare(`
-      INSERT INTO ingest_cursors(source_key, file_path, byte_offset, updated_at) VALUES (?, ?, ?, ?)
+      INSERT INTO ingest_cursors(source_key, file_path, byte_offset, prefix_hash, updated_at) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(source_key) DO UPDATE SET file_path=excluded.file_path,
-        byte_offset=excluded.byte_offset, updated_at=excluded.updated_at
-    `).run(sourceKey, filePath, byteOffset, now());
+        byte_offset=excluded.byte_offset, prefix_hash=COALESCE(excluded.prefix_hash, ingest_cursors.prefix_hash),
+        updated_at=excluded.updated_at
+    `).run(sourceKey, filePath, byteOffset, prefixHash, now());
   }
 
   get(eventId) {
