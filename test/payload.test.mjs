@@ -18,6 +18,11 @@ test('redacts common credential formats before persistence', () => {
   assert.match(redacted, /\[REDACTED\]/);
 });
 
+test('redacts credential keys inside JSON-encoded text', () => {
+  const redacted = redactText('{"apiKey":"json-secret","accessToken":"json-token"}');
+  assert.equal(redacted, '{"apiKey":"[REDACTED]","accessToken":"[REDACTED]"}');
+});
+
 test('redacts credential-shaped keys in nested structured payloads', () => {
   const repo = tempRepo();
   initRepository(repo);
