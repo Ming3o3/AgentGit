@@ -46,7 +46,7 @@ export function scanCodexRollouts({ root, store, agentId, taskId = null, refPref
 
 export async function watchCodexRollouts({ root, store, agentId, taskId = null, intervalMs = 1000, signal, onScan = () => {} }) {
   if (!Number.isInteger(intervalMs) || intervalMs < 50) throw new Error('intervalMs must be an integer >= 50');
-  let stopped = false;
+  let stopped = Boolean(signal?.aborted);
   const stop = () => { stopped = true; };
   signal?.addEventListener('abort', stop, { once: true });
   try {

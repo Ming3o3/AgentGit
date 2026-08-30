@@ -57,3 +57,17 @@ test('stops a long polling interval immediately when aborted', async () => {
   assert.equal(scans, 1);
   assert.ok(Date.now() - started < 1000);
 });
+
+test('does not scan when started with an already-aborted signal', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let scans = 0;
+  await watchCodexRollouts({
+    root: tempRoot(),
+    store: { importJsonl() { throw new Error('scan should not import'); } },
+    agentId: 'coder',
+    signal: controller.signal,
+    onScan() { scans += 1; },
+  });
+  assert.equal(scans, 0);
+});
