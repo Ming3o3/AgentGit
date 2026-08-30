@@ -502,22 +502,24 @@ export class EventStore {
 
   importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path.resolve(filePath)}`, adapter }) {
     const absolutePath = path.resolve(filePath);
-    const currentSize = fs.statSync(absolutePath).size;
-    const cursor = this.database.prepare('SELECT byte_offset, prefix_hash FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
     const bytes = fs.readFileSync(absolutePath);
     const completeEnd = bytes.lastIndexOf(0x0a, bytes.length - 1) + 1;
-    const currentPrefixHash = cursor?.prefix_hash && cursor.byte_offset <= bytes.length
-      ? crypto.createHash('sha256').update(bytes.subarray(0, cursor.byte_offset)).digest('hex')
-      : null;
-    const rewound = Boolean(cursor && (
-      cursor.byte_offset > currentSize
-      || completeEnd < cursor.byte_offset
-      || (cursor.prefix_hash && currentPrefixHash !== cursor.prefix_hash)
-    ));
-    const startOffset = cursor && !rewound ? cursor.byte_offset : 0;
-    const completeBytes = bytes.subarray(startOffset, completeEnd);
-    if (completeBytes.length === 0 && !rewound) return { imported: 0, skipped: 0, offset: startOffset };
     const transaction = this.database.transaction(() => {
+      // Resolve the cursor after acquiring the write lock. Multiple watchers
+      // may read the same rollout concurrently; each importer must make its
+      // decision from the cursor committed by the previous importer.
+      const cursor = this.database.prepare('SELECT byte_offset, prefix_hash FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
+      const currentPrefixHash = cursor?.prefix_hash && cursor.byte_offset <= bytes.length
+        ? crypto.createHash('sha256').update(bytes.subarray(0, cursor.byte_offset)).digest('hex')
+        : null;
+      const rewound = Boolean(cursor && (
+        cursor.byte_offset > bytes.length
+        || completeEnd < cursor.byte_offset
+        || (cursor.prefix_hash && currentPrefixHash !== cursor.prefix_hash)
+      ));
+      const startOffset = cursor && !rewound ? cursor.byte_offset : 0;
+      const completeBytes = bytes.subarray(startOffset, completeEnd);
+      if (completeBytes.length === 0 && !rewound) return { imported: 0, skipped: 0, offset: startOffset };
       if (rewound) {
         this.database.prepare('DELETE FROM source_events WHERE source_key = ?').run(sourceKey);
         this.database.prepare('DELETE FROM ingest_cursors WHERE source_key = ?').run(sourceKey);

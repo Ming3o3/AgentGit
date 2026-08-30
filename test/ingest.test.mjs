@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { initRepository, EventStore } from '../src/store.mjs';
 import { normalizeCodexRecord } from '../src/adapters/codex.mjs';
 
 function tempDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'agentgit-ingest-')); }
+
+function importFromProcess({ worker, repo, rollout, sourceKey }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [worker, repo, rollout, sourceKey], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(JSON.parse(stdout));
+      else reject(new Error(`worker failed (${code}): ${stderr}`));
+    });
+  });
+}
 
 test('normalizes Codex messages and tool calls', () => {
   assert.deepEqual(normalizeCodexRecord({ type: 'event_msg', payload: { type: 'agent_message', message: 'done' } }), {
@@ -88,6 +105,36 @@ test('restarts a source when a rollout prefix is rewritten at the same length', 
   fs.writeFileSync(rollout, line('new-1') + line('new-2'));
   assert.equal(store.importJsonl({ filePath: rollout, agentId: 'coder', sourceKey: 'codex:rewrite', adapter: normalizeCodexRecord }).imported, 2);
   assert.deepEqual(store.list({ limit: 10 }).map((event) => event.payload.text), ['old-1', 'old-2', 'new-1', 'new-2']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
+
+test('serializes concurrent imports of one rollout cursor', async () => {
+  const root = tempDir();
+  const repo = path.join(root, 'repo');
+  const rollout = path.join(root, 'rollout.jsonl');
+  const sourceKey = 'codex:concurrent';
+  initRepository(repo);
+  fs.writeFileSync(rollout, [
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'one' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'two' } }),
+  ].join('\n') + '\n');
+  const worker = path.join(repo, 'import-worker.mjs');
+  const storeUrl = pathToFileURL(path.resolve('src/store.mjs')).href;
+  const adapterUrl = pathToFileURL(path.resolve('src/adapters/codex.mjs')).href;
+  fs.writeFileSync(worker, `import { EventStore } from ${JSON.stringify(storeUrl)};
+import { normalizeCodexRecord } from ${JSON.stringify(adapterUrl)};
+const store = new EventStore(process.argv[2]);
+const result = store.importJsonl({ filePath: process.argv[3], sourceKey: process.argv[4], agentId: 'coder', adapter: normalizeCodexRecord });
+store.close();
+process.stdout.write(JSON.stringify(result));
+`);
+  const results = await Promise.all(Array.from({ length: 8 }, () => importFromProcess({ worker, repo, rollout, sourceKey })));
+  assert.equal(results.reduce((total, result) => total + result.imported, 0), 2);
+  assert.equal(results.filter((result) => result.imported === 2).length, 1);
+  assert.equal(results.filter((result) => result.imported === 0).length, 7);
+  const store = new EventStore(repo);
+  assert.deepEqual(store.list({ limit: 10 }).map((event) => event.payload.text), ['one', 'two']);
   assert.equal(store.verifyAll().valid, true);
   store.close();
 });
