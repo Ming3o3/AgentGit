@@ -535,7 +535,8 @@ export class EventStore {
         prefixHasher.update(bytes.subarray(lineStart, offset));
         let raw;
         try { raw = JSON.parse(lineBytes); } catch { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset, prefixHash()); continue; }
-        const normalized = adapter(raw);
+        let normalized;
+        try { normalized = adapter(raw); } catch { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset, prefixHash()); continue; }
         if (!normalized) { skipped += 1; this.#advanceCursor(sourceKey, absolutePath, offset, prefixHash()); continue; }
         this.#insertEvent({
           agentId,

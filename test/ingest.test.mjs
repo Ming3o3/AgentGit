@@ -53,6 +53,30 @@ test('imports complete JSONL lines and resumes from a cursor', () => {
   store.close();
 });
 
+test('skips records rejected by an adapter and continues importing', () => {
+  const root = tempDir();
+  const repo = path.join(root, 'repo');
+  const rollout = path.join(root, 'rollout.jsonl');
+  initRepository(repo);
+  fs.writeFileSync(rollout, [
+    JSON.stringify({ kind: 'bad' }),
+    JSON.stringify({ kind: 'good', text: 'kept' }),
+  ].join('\n') + '\n');
+  const store = new EventStore(repo);
+  const result = store.importJsonl({
+    filePath: rollout,
+    agentId: 'coder',
+    adapter(raw) {
+      if (raw.kind === 'bad') throw new Error('unsupported record');
+      return { type: 'note.recorded', payload: { text: raw.text }, adapter: 'test' };
+    },
+  });
+  assert.deepEqual(result, { imported: 1, skipped: 1, offset: fs.statSync(rollout).size });
+  assert.deepEqual(store.list({ limit: 10 }).map((event) => event.payload.text), ['kept']);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
+
 test('restarts a source when a rollout file is truncated', () => {
   const root = tempDir();
   const repo = path.join(root, 'repo');
