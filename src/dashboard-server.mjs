@@ -26,21 +26,29 @@ export function createDashboardServer({ repo }) {
   const initialized = initRepository(repo);
   const store = new EventStore(initialized.repo);
   const server = http.createServer((request, response) => {
-    const requestUrl = new URL(request.url, 'http://127.0.0.1');
-    if (request.method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' });
-    if (requestUrl.pathname === '/api/overview') {
-      return sendJson(response, 200, {
-        repo: initialized.repo,
-        generatedAt: new Date().toISOString(),
-        summary: store.dashboardSummary(),
-        tasks: store.listTasks({ limit: 500 }),
-        events: store.recentEvents({ limit: 300 }),
-        refs: store.refs(),
-      });
+    try {
+      const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+      if (request.method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' });
+      if (requestUrl.pathname === '/api/overview') {
+        return sendJson(response, 200, {
+          repo: initialized.repo,
+          generatedAt: new Date().toISOString(),
+          summary: store.dashboardSummary(),
+          tasks: store.listTasks({ limit: 500 }),
+          events: store.recentEvents({ limit: 300 }),
+          refs: store.refs(),
+        });
+      }
+      const asset = STATIC_FILES[requestUrl.pathname];
+      if (asset) return sendStatic(response, ...asset);
+      return sendJson(response, 404, { error: 'not found' });
+    } catch (error) {
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
+      return sendJson(response, 400, { error: 'bad request', message: error instanceof Error ? error.message : String(error) });
     }
-    const asset = STATIC_FILES[requestUrl.pathname];
-    if (asset) return sendStatic(response, ...asset);
-    return sendJson(response, 404, { error: 'not found' });
   });
   server.once('close', () => store.close());
   return server;

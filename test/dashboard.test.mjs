@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { initRepository, EventStore } from '../src/store.mjs';
@@ -27,6 +28,28 @@ test('serves project tasks, events, refs, and metrics through the local dashboar
     assert.equal(overview.refs.length, 1);
     const page = await fetch(dashboard.url).then((response) => response.text());
     assert.match(page, /AgentGit/);
+  } finally {
+    await new Promise((resolve) => dashboard.server.close(resolve));
+  }
+});
+
+test('contains unusual dashboard URLs without taking down the server', async () => {
+  const repo = tempRepo();
+  const dashboard = await startDashboard({ repo, port: 0 });
+  const address = dashboard.server.address();
+  const request = () => new Promise((resolve, reject) => {
+    const client = http.request({ hostname: '127.0.0.1', port: address.port, path: '/%zz' }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body }));
+    });
+    client.on('error', reject);
+    client.end();
+  });
+  try {
+    assert.equal((await request()).status, 404);
+    assert.equal((await fetch(`${dashboard.url}/api/overview`)).status, 200);
   } finally {
     await new Promise((resolve) => dashboard.server.close(resolve));
   }
