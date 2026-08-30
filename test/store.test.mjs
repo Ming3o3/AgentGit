@@ -30,7 +30,6 @@ function appendFromProcess({ worker, repo, agentId }) {
 
 test('initializes a repository and appends a hash-addressed event', () => {
   const repo = tempRepo();
-  initRepository(repo);
   const store = new EventStore(repo);
   const event = store.append({
     agentId: 'planner',
@@ -87,7 +86,6 @@ test('upgrades a schema v1 database without losing existing events', () => {
     canonicalJson(existing.parents), existing.causation_id, canonicalJson(existing.payload),
     null, existing.created_at, sha256(existing));
   database.close();
-  initRepository(repo);
   const store = new EventStore(repo);
   const task = store.createTask({ createdBy: 'planner', title: 'Post-upgrade task' });
   assert.equal(store.get('evt_legacy').payload.text, 'kept');

@@ -272,22 +272,13 @@ export function repoDbPath(repo) {
   return path.join(path.resolve(repo), '.agentgit', 'events.db');
 }
 
-export function initRepository(repo) {
-  const root = path.resolve(repo);
-  const directory = path.join(root, '.agentgit');
-  fs.mkdirSync(directory, { recursive: true });
-  const database = new Database(path.join(directory, 'events.db'));
+function migrateDatabase(database) {
   database.pragma('journal_mode = WAL');
   database.pragma('foreign_keys = ON');
   database.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
   const currentVersion = recordedVersion === undefined ? 0 : Number(recordedVersion);
-  try {
-    assertSupportedSchema(database);
-  } catch (error) {
-    database.close();
-    throw error;
-  }
+  assertSupportedSchema(database);
   const migrate = database.transaction(() => {
     for (const migration of SCHEMA_MIGRATIONS) {
       if (migration.version <= currentVersion) continue;
@@ -298,14 +289,20 @@ export function initRepository(repo) {
       `).run(String(migration.version));
     }
   });
+  migrate.immediate();
+  ensureEventOrder(database);
+}
+
+export function initRepository(repo) {
+  const root = path.resolve(repo);
+  const directory = path.join(root, '.agentgit');
+  fs.mkdirSync(directory, { recursive: true });
+  const database = new Database(path.join(directory, 'events.db'));
   try {
-    migrate.immediate();
-    ensureEventOrder(database);
-  } catch (error) {
+    migrateDatabase(database);
+  } finally {
     database.close();
-    throw error;
   }
-  database.close();
   ensureGitExcludesState(root);
   return { repo: root, database: path.join(directory, 'events.db') };
 }
@@ -350,12 +347,14 @@ function ensureGitExcludesState(root) {
 export class EventStore {
   constructor(repo) {
     this.repo = path.resolve(repo);
+    fs.mkdirSync(path.join(this.repo, '.agentgit'), { recursive: true });
     this.database = new Database(repoDbPath(this.repo));
-    this.database.pragma('journal_mode = WAL');
-    this.database.pragma('foreign_keys = ON');
     try {
-      assertSupportedSchema(this.database);
-      ensureEventOrder(this.database);
+      // CLI, MCP, and integrations may open the store without an explicit
+      // init command. Reuse the same migration path so every entry point sees
+      // a complete current schema before any query is prepared.
+      migrateDatabase(this.database);
+      ensureGitExcludesState(this.repo);
     } catch (error) {
       this.database.close();
       throw error;
