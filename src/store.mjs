@@ -20,6 +20,102 @@ const TASK_TRANSITIONS = {
   cancelled: new Set(),
 };
 const MAX_QUERY_LIMIT = 10000;
+const SCHEMA_MIGRATIONS = [
+  {
+    version: 1,
+    name: 'event-history',
+    apply(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id TEXT PRIMARY KEY,
+          task_id TEXT,
+          session_id TEXT,
+          agent_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          parents_json TEXT NOT NULL,
+          causation_id TEXT,
+          payload_json TEXT NOT NULL,
+          source_json TEXT,
+          created_at TEXT NOT NULL,
+          content_hash TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE IF NOT EXISTS refs (
+          name TEXT PRIMARY KEY,
+          event_id TEXT,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (event_id) REFERENCES events(id)
+        );
+        CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, created_at);
+        CREATE INDEX IF NOT EXISTS events_agent_time ON events(agent_id, created_at);
+        CREATE INDEX IF NOT EXISTS events_type_time ON events(type, created_at);
+        CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_update
+          BEFORE UPDATE ON events BEGIN
+            SELECT RAISE(ABORT, 'events are immutable');
+          END;
+        CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_delete
+          BEFORE DELETE ON events BEGIN
+            SELECT RAISE(ABORT, 'events are immutable');
+          END;
+      `);
+    },
+  },
+  {
+    version: 2,
+    name: 'projections-and-ingest',
+    apply(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS event_order (
+          event_id TEXT PRIMARY KEY,
+          sequence INTEGER NOT NULL UNIQUE,
+          FOREIGN KEY (event_id) REFERENCES events(id)
+        );
+        CREATE TABLE IF NOT EXISTS ingest_cursors (
+          source_key TEXT PRIMARY KEY,
+          file_path TEXT NOT NULL,
+          byte_offset INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS source_events (
+          source_key TEXT NOT NULL,
+          source_offset INTEGER NOT NULL,
+          event_id TEXT NOT NULL,
+          PRIMARY KEY (source_key, source_offset),
+          FOREIGN KEY (event_id) REFERENCES events(id)
+        );
+        CREATE TABLE IF NOT EXISTS deliveries (
+          event_id TEXT NOT NULL,
+          recipient_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'acknowledged')),
+          created_at TEXT NOT NULL,
+          delivered_at TEXT,
+          acknowledged_at TEXT,
+          PRIMARY KEY (event_id, recipient_id),
+          FOREIGN KEY (event_id) REFERENCES events(id)
+        );
+        CREATE TABLE IF NOT EXISTS tasks (
+          task_id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          priority TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          assignee_id TEXT,
+          blocked_reason TEXT,
+          created_event_id TEXT NOT NULL,
+          updated_event_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT,
+          FOREIGN KEY (created_event_id) REFERENCES events(id),
+          FOREIGN KEY (updated_event_id) REFERENCES events(id)
+        );
+        CREATE INDEX IF NOT EXISTS event_order_sequence ON event_order(sequence);
+        CREATE INDEX IF NOT EXISTS deliveries_recipient_status ON deliveries(recipient_id, status, created_at);
+        CREATE INDEX IF NOT EXISTS tasks_assignee_status ON tasks(assignee_id, status, updated_at);
+      `);
+    },
+  },
+];
 
 function now() {
   return new Date().toISOString();
@@ -165,106 +261,30 @@ export function initRepository(repo) {
   const database = new Database(path.join(directory, 'events.db'));
   database.pragma('journal_mode = WAL');
   database.pragma('foreign_keys = ON');
-  const hasMetadata = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get();
-  if (hasMetadata) {
-    const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
-    if (recordedVersion !== undefined) {
-      const parsedVersion = Number(recordedVersion);
-      if (!Number.isInteger(parsedVersion) || parsedVersion > SCHEMA_VERSION) {
-        database.close();
-        throw new Error(`unsupported AgentGit schema version: ${recordedVersion}`);
-      }
-    }
+  database.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
+  const currentVersion = recordedVersion === undefined ? 0 : Number(recordedVersion);
+  if (!Number.isInteger(currentVersion) || currentVersion < 0 || currentVersion > SCHEMA_VERSION) {
+    database.close();
+    throw new Error(`unsupported AgentGit schema version: ${recordedVersion}`);
   }
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS metadata (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS events (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      session_id TEXT,
-      agent_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      parents_json TEXT NOT NULL,
-      causation_id TEXT,
-      payload_json TEXT NOT NULL,
-      source_json TEXT,
-      created_at TEXT NOT NULL,
-      content_hash TEXT NOT NULL UNIQUE
-    );
-    CREATE TABLE IF NOT EXISTS event_order (
-      event_id TEXT PRIMARY KEY,
-      sequence INTEGER NOT NULL UNIQUE,
-      FOREIGN KEY (event_id) REFERENCES events(id)
-    );
-    CREATE TABLE IF NOT EXISTS refs (
-      name TEXT PRIMARY KEY,
-      event_id TEXT,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (event_id) REFERENCES events(id)
-    );
-    CREATE TABLE IF NOT EXISTS ingest_cursors (
-      source_key TEXT PRIMARY KEY,
-      file_path TEXT NOT NULL,
-      byte_offset INTEGER NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS source_events (
-      source_key TEXT NOT NULL,
-      source_offset INTEGER NOT NULL,
-      event_id TEXT NOT NULL,
-      PRIMARY KEY (source_key, source_offset),
-      FOREIGN KEY (event_id) REFERENCES events(id)
-    );
-    CREATE TABLE IF NOT EXISTS deliveries (
-      event_id TEXT NOT NULL,
-      recipient_id TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'acknowledged')),
-      created_at TEXT NOT NULL,
-      delivered_at TEXT,
-      acknowledged_at TEXT,
-      PRIMARY KEY (event_id, recipient_id),
-      FOREIGN KEY (event_id) REFERENCES events(id)
-    );
-    CREATE TABLE IF NOT EXISTS tasks (
-      task_id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      priority TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_by TEXT NOT NULL,
-      assignee_id TEXT,
-      blocked_reason TEXT,
-      created_event_id TEXT NOT NULL,
-      updated_event_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      completed_at TEXT,
-      FOREIGN KEY (created_event_id) REFERENCES events(id),
-      FOREIGN KEY (updated_event_id) REFERENCES events(id)
-    );
-    CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, created_at);
-    CREATE INDEX IF NOT EXISTS events_agent_time ON events(agent_id, created_at);
-    CREATE INDEX IF NOT EXISTS events_type_time ON events(type, created_at);
-    CREATE INDEX IF NOT EXISTS event_order_sequence ON event_order(sequence);
-    CREATE INDEX IF NOT EXISTS deliveries_recipient_status ON deliveries(recipient_id, status, created_at);
-    CREATE INDEX IF NOT EXISTS tasks_assignee_status ON tasks(assignee_id, status, updated_at);
-    CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_update
-      BEFORE UPDATE ON events BEGIN
-        SELECT RAISE(ABORT, 'events are immutable');
-      END;
-    CREATE TRIGGER IF NOT EXISTS events_are_immutable_on_delete
-      BEFORE DELETE ON events BEGIN
-        SELECT RAISE(ABORT, 'events are immutable');
-      END;
-  `);
-  ensureEventOrder(database);
-  database.prepare(`
-    INSERT INTO metadata(key, value) VALUES ('schema_version', ?)
-    ON CONFLICT(key) DO UPDATE SET value=excluded.value
-  `).run(String(SCHEMA_VERSION));
+  const migrate = database.transaction(() => {
+    for (const migration of SCHEMA_MIGRATIONS) {
+      if (migration.version <= currentVersion) continue;
+      migration.apply(database);
+      database.prepare(`
+        INSERT INTO metadata(key, value) VALUES ('schema_version', ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+      `).run(String(migration.version));
+    }
+  });
+  try {
+    migrate.immediate();
+    ensureEventOrder(database);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
   database.close();
   ensureGitExcludesState(root);
   return { repo: root, database: path.join(directory, 'events.db') };
