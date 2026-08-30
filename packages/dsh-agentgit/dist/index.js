@@ -1478,11 +1478,12 @@ function registerTools(ctx, store, config) {
     name: "agentgit_list_tasks",
     description: "List task state reconstructed from immutable task events.",
     parameters: {
+      assigneeId: stringParameter(false, "Optional agent ID to filter by assignee."),
       status: stringParameter(false, "Optional task status."),
       limit: { type: "number" }
     },
     async execute(args) {
-      return store.listTasks({ assigneeId: config.agentId, status: args?.status ?? null, limit: args?.limit ?? 100 });
+      return store.listTasks({ assigneeId: args?.assigneeId ?? null, status: args?.status ?? null, limit: args?.limit ?? 100 });
     }
   });
   objectTool(ctx, {

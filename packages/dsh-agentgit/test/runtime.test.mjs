@@ -101,6 +101,23 @@ test('Harness tool execution writes AgentGit task events', async () => {
   for (const dispose of effects) dispose?.();
 });
 
+test('Harness task listing includes unassigned tasks and supports assignee filters', async () => {
+  const { repo, tools, effects } = fixture();
+  const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
+  const listTasks = tools.find((tool) => tool.name === 'agentgit_list_tasks');
+  const first = JSON.parse(await createTask.execute({ title: 'Unassigned task' }));
+  const second = JSON.parse(await createTask.execute({ title: 'Review task' }));
+  const store = new EventStore(repo);
+  store.assignTask({ taskId: second.task.id, assignedBy: 'coder', assigneeId: 'reviewer' });
+  store.close();
+
+  const all = JSON.parse(await listTasks.execute({}));
+  assert.deepEqual(all.map((task) => task.id).sort(), [first.task.id, second.task.id].sort());
+  const filtered = JSON.parse(await listTasks.execute({ assigneeId: 'reviewer' }));
+  assert.deepEqual(filtered.map((task) => task.id), [second.task.id]);
+  for (const dispose of effects) dispose?.();
+});
+
 test('combined Harness task updates are atomic', async () => {
   const { repo, tools, effects } = fixture();
   const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
