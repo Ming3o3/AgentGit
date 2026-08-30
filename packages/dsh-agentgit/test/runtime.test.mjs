@@ -36,6 +36,7 @@ test('registers Harness tools and imports session events idempotently', async ()
     'agentgit_list_tasks',
     'agentgit_create_checkpoint',
     'agentgit_verify_history',
+    'agentgit_rebuild_task_projection',
   ]);
   const event = { seq: 4, time: 10, type: 'user/message', data: { role: 'user', content: 'hello' } };
   listeners.get('session/event')({ id: 'session-1' }, event);
@@ -114,6 +115,19 @@ test('combined Harness task updates are atomic', async () => {
   assert.equal(store.getTask(taskId).status, 'open');
   assert.equal(store.getTask(taskId).assigneeId, null);
   assert.deepEqual(store.list({ taskId }).map((event) => event.type), ['task.created']);
+  store.close();
+  for (const dispose of effects) dispose?.();
+});
+
+test('exposes task projection recovery through the Harness tool registry', async () => {
+  const { repo, tools, effects } = fixture();
+  const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
+  const rebuild = tools.find((tool) => tool.name === 'agentgit_rebuild_task_projection');
+  await createTask.execute({ title: 'Recover projection' });
+  const result = JSON.parse(await rebuild.execute({}));
+  assert.equal(result.events, 1);
+  const store = new EventStore(repo);
+  assert.equal(store.listTasks({ limit: 10 }).length, 1);
   store.close();
   for (const dispose of effects) dispose?.();
 });

@@ -57,5 +57,6 @@ dsh plugin --profile agentgit-dev add /absolute/path/to/dsh-agentgit
 不会改变 Harness 原有的对话、工具调用或会话流程。
 
 当前版本的面板是只读的：事件详情可展开查看，任务和 checkpoint 的修改仍由
-AgentGit 工具或 CLI 完成。若 profile 没有启动 WebServer，Host 插件仍可作为
+AgentGit 工具或 CLI 完成；投影异常时可直接调用
+`agentgit_rebuild_task_projection` 从不可变任务事件恢复当前任务状态。若 profile 没有启动 WebServer，Host 插件仍可作为
 纯工具/事件采集插件使用，Web route 会在 WebServer 可用时自动注册。

@@ -1512,6 +1512,14 @@ function registerTools(ctx, store, config) {
       return store.verifyAll();
     }
   });
+  objectTool(ctx, {
+    name: "agentgit_rebuild_task_projection",
+    description: "Rebuild the mutable task projection from immutable task events without changing event history.",
+    parameters: {},
+    async execute() {
+      return { events: store.rebuildTaskProjection() };
+    }
+  });
 }
 function apply(ctx, config) {
   initRepository(config.repo);
