@@ -56,13 +56,20 @@ export function createDashboardServer({ repo }) {
 
 export async function startDashboard({ repo, host = '127.0.0.1', port = 3210 }) {
   const server = createDashboardServer({ repo });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      server.removeListener('error', reject);
-      resolve();
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
     });
-  });
+  } catch (error) {
+    // The close event owns the SQLite teardown. Run it even when listen fails
+    // before the server reaches the listening state (for example, EADDRINUSE).
+    await new Promise((resolve) => server.close(() => resolve()));
+    throw error;
+  }
   const address = server.address();
   return { server, url: `http://${host}:${address.port}` };
 }

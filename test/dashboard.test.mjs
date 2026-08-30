@@ -54,3 +54,16 @@ test('contains unusual dashboard URLs without taking down the server', async () 
     await new Promise((resolve) => dashboard.server.close(resolve));
   }
 });
+
+test('cleans up the store when dashboard binding fails', async () => {
+  const repo = tempRepo();
+  const first = await startDashboard({ repo, port: 0 });
+  const address = first.server.address();
+  try {
+    await assert.rejects(() => startDashboard({ repo, port: address.port }), /EADDRINUSE/);
+  } finally {
+    await new Promise((resolve) => first.server.close(resolve));
+  }
+  const recovered = await startDashboard({ repo, port: address.port });
+  await new Promise((resolve) => recovered.server.close(resolve));
+});
