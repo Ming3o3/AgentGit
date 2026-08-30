@@ -350,10 +350,10 @@ function migrateDatabase(database) {
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   database.exec("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
-  const currentVersion = recordedVersion === void 0 ? 0 : Number(recordedVersion);
-  assertSupportedSchema(database);
   const migrate = database.transaction(() => {
+    const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
+    const currentVersion = recordedVersion === void 0 ? 0 : Number(recordedVersion);
+    assertSupportedSchema(database);
     for (const migration of SCHEMA_MIGRATIONS) {
       if (migration.version <= currentVersion) continue;
       migration.apply(database);

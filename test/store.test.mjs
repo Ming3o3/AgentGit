@@ -96,6 +96,43 @@ test('upgrades a schema v1 database without losing existing events', () => {
   store.close();
 });
 
+test('serializes concurrent opens while upgrading an older schema', async () => {
+  const repo = tempRepo();
+  const directory = path.join(repo, '.agentgit');
+  fs.mkdirSync(directory, { recursive: true });
+  const database = new Database(path.join(directory, 'events.db'));
+  database.exec(`
+    CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE events (
+      id TEXT PRIMARY KEY, task_id TEXT, session_id TEXT, agent_id TEXT NOT NULL,
+      type TEXT NOT NULL, parents_json TEXT NOT NULL, causation_id TEXT,
+      payload_json TEXT NOT NULL, source_json TEXT, created_at TEXT NOT NULL,
+      content_hash TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE refs (
+      name TEXT PRIMARY KEY, event_id TEXT, updated_at TEXT NOT NULL,
+      FOREIGN KEY (event_id) REFERENCES events(id)
+    );
+    INSERT INTO metadata(key, value) VALUES ('schema_version', '1');
+  `);
+  database.close();
+
+  const worker = path.join(repo, 'open-worker.mjs');
+  const storeUrl = pathToFileURL(path.resolve('src/store.mjs')).href;
+  fs.writeFileSync(worker, `import { EventStore } from ${JSON.stringify(storeUrl)};
+const store = new EventStore(process.argv[2]);
+const version = store.database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value;
+store.close();
+process.stdout.write(JSON.stringify(version));
+`);
+  const versions = await Promise.all(Array.from({ length: 8 }, () => appendFromProcess({
+    worker,
+    repo,
+    agentId: 'migration-check',
+  })));
+  assert.deepEqual(versions, Array(8).fill('3'));
+});
+
 test('rejects a database created by a newer schema version', () => {
   const repo = tempRepo();
   const directory = path.join(repo, '.agentgit');
