@@ -2,6 +2,8 @@ import { putObject } from './objects.mjs';
 
 const INLINE_LIMIT = 8192;
 
+const SENSITIVE_KEYS = /^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|secret|token|client[_-]?secret|refresh[_-]?token|private[_-]?key)$/iu;
+
 const SECRET_PATTERNS = [
   /((?:api[_-]?key|access[_-]?token|auth(?:orization)?|password|secret|token)\s*[:=]\s*["']?)([^\s,"']{8,})/giu,
   /\bBearer\s+[A-Za-z0-9._~+\-/=]{12,}/gu,
@@ -16,7 +18,8 @@ export function redactText(text) {
   return result;
 }
 
-export function sanitizePayload(value, repo) {
+export function sanitizePayload(value, repo, key = null) {
+  if (key !== null && SENSITIVE_KEYS.test(key)) return '[REDACTED]';
   if (typeof value === 'string') {
     const safe = redactText(value);
     if (Buffer.byteLength(safe, 'utf8') <= INLINE_LIMIT) return safe;
@@ -29,7 +32,7 @@ export function sanitizePayload(value, repo) {
   }
   if (Array.isArray(value)) return value.map((item) => sanitizePayload(item, repo));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizePayload(item, repo)]));
+    return Object.fromEntries(Object.entries(value).map(([childKey, item]) => [childKey, sanitizePayload(item, repo, childKey)]));
   }
   return value;
 }

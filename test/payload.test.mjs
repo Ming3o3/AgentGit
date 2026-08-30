@@ -18,6 +18,30 @@ test('redacts common credential formats before persistence', () => {
   assert.match(redacted, /\[REDACTED\]/);
 });
 
+test('redacts credential-shaped keys in nested structured payloads', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const event = store.append({
+    agentId: 'coder',
+    type: 'tool.called',
+    payload: {
+      config: {
+        apiKey: 'sk-structured-secret',
+        password: 'nested-password',
+        Authorization: 'Bearer structured-token',
+      },
+      items: [{ access_token: 'nested-access-token' }],
+    },
+  });
+  assert.deepEqual(event.payload, {
+    config: { apiKey: '[REDACTED]', password: '[REDACTED]', Authorization: '[REDACTED]' },
+    items: [{ access_token: '[REDACTED]' }],
+  });
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
+
 test('externalizes large payload text to a content-addressed object', () => {
   const repo = tempRepo();
   initRepository(repo);
