@@ -344,22 +344,13 @@ function expectedTaskProjection(events, addAuditIssue) {
 function repoDbPath(repo) {
   return path2.join(path2.resolve(repo), ".agentgit", "events.db");
 }
-function initRepository(repo) {
-  const root = path2.resolve(repo);
-  const directory = path2.join(root, ".agentgit");
-  fs2.mkdirSync(directory, { recursive: true });
-  const database = new Database(path2.join(directory, "events.db"));
+function migrateDatabase(database) {
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   database.exec("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   const recordedVersion = database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get()?.value;
   const currentVersion = recordedVersion === void 0 ? 0 : Number(recordedVersion);
-  try {
-    assertSupportedSchema(database);
-  } catch (error) {
-    database.close();
-    throw error;
-  }
+  assertSupportedSchema(database);
   const migrate = database.transaction(() => {
     for (const migration of SCHEMA_MIGRATIONS) {
       if (migration.version <= currentVersion) continue;
@@ -370,14 +361,19 @@ function initRepository(repo) {
       `).run(String(migration.version));
     }
   });
+  migrate.immediate();
+  ensureEventOrder(database);
+}
+function initRepository(repo) {
+  const root = path2.resolve(repo);
+  const directory = path2.join(root, ".agentgit");
+  fs2.mkdirSync(directory, { recursive: true });
+  const database = new Database(path2.join(directory, "events.db"));
   try {
-    migrate.immediate();
-    ensureEventOrder(database);
-  } catch (error) {
+    migrateDatabase(database);
+  } finally {
     database.close();
-    throw error;
   }
-  database.close();
   ensureGitExcludesState(root);
   return { repo: root, database: path2.join(directory, "events.db") };
 }
@@ -420,12 +416,11 @@ function ensureGitExcludesState(root) {
 var EventStore = class {
   constructor(repo) {
     this.repo = path2.resolve(repo);
+    fs2.mkdirSync(path2.join(this.repo, ".agentgit"), { recursive: true });
     this.database = new Database(repoDbPath(this.repo));
-    this.database.pragma("journal_mode = WAL");
-    this.database.pragma("foreign_keys = ON");
     try {
-      assertSupportedSchema(this.database);
-      ensureEventOrder(this.database);
+      migrateDatabase(this.database);
+      ensureGitExcludesState(this.repo);
     } catch (error) {
       this.database.close();
       throw error;
