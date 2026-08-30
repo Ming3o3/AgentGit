@@ -207,7 +207,7 @@ function expectedTaskProjection(events, addAuditIssue) {
     const taskId = event?.taskId ?? event?.task_id;
     const createdAt = event?.createdAt ?? event?.created_at;
     const agentId = event?.agentId ?? event?.agent_id;
-    if (!taskId || !event.type.startsWith('task.')) continue;
+    if (!taskId || typeof event?.type !== 'string' || !event.type.startsWith('task.')) continue;
     if (event.type === 'task.created') {
       const { title, description = '', priority = 'normal' } = event.payload ?? {};
       if (typeof title !== 'string' || !title.trim() || typeof description !== 'string' || !TASK_PRIORITIES.has(priority)) {

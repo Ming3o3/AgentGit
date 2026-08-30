@@ -316,6 +316,23 @@ test('audits hashes, links, objects, and rebuildable projections', () => {
   store.close();
 });
 
+test('reports malformed task event types without crashing the audit', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  store.database.prepare(`
+    INSERT INTO events(id, task_id, session_id, agent_id, type, parents_json, causation_id,
+      payload_json, source_json, created_at, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('evt_corrupt_type', 'task-corrupt', null, 'coder', 123, '[]', null, '{}', null,
+    '2026-08-31T00:00:00.000Z', 'not-a-valid-hash');
+  store.database.prepare('INSERT INTO event_order(event_id, sequence) VALUES (?, ?)').run('evt_corrupt_type', 1);
+  const audit = store.verifyAll();
+  assert.equal(audit.valid, false);
+  assert.ok(audit.issues.some((issue) => issue.kind === 'event_hash_mismatch' && issue.eventId === 'evt_corrupt_type'));
+  store.close();
+});
+
 test('rejects a missing parent and never writes a partial event', () => {
   const repo = tempRepo();
   initRepository(repo);
