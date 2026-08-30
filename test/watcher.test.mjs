@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initRepository, EventStore } from '../src/store.mjs';
-import { scanCodexRollouts } from '../src/watcher.mjs';
+import { scanCodexRollouts, watchCodexRollouts } from '../src/watcher.mjs';
 
 function tempRoot() { return fs.mkdtempSync(path.join(os.tmpdir(), 'agentgit-watch-')); }
 
@@ -35,4 +35,25 @@ test('ignores hidden directories and non-rollout JSONL files', () => {
   fs.writeFileSync(path.join(root, '.hidden', 'rollout-hidden.jsonl'), '{}\n');
   fs.writeFileSync(path.join(root, 'session_index.jsonl'), '{}\n');
   assert.deepEqual(scanCodexRollouts({ root, store: { importJsonl() { throw new Error('should not import'); } }, agentId: 'coder' }), { files: 0, imported: 0, skipped: 0 });
+});
+
+test('stops a long polling interval immediately when aborted', async () => {
+  const root = tempRoot();
+  const controller = new AbortController();
+  let scans = 0;
+  const started = Date.now();
+  const watching = watchCodexRollouts({
+    root,
+    store: { importJsonl() { return { imported: 0, skipped: 0, offset: 0 }; } },
+    agentId: 'coder',
+    intervalMs: 5000,
+    signal: controller.signal,
+    onScan() {
+      scans += 1;
+      if (scans === 1) setTimeout(() => controller.abort(), 10);
+    },
+  });
+  await watching;
+  assert.equal(scans, 1);
+  assert.ok(Date.now() - started < 1000);
 });

@@ -49,10 +49,31 @@ export async function watchCodexRollouts({ root, store, agentId, taskId = null, 
   let stopped = false;
   const stop = () => { stopped = true; };
   signal?.addEventListener('abort', stop, { once: true });
-  while (!stopped) {
-    onScan(scanCodexRollouts({ root, store, agentId, taskId }));
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  try {
+    while (!stopped) {
+      onScan(scanCodexRollouts({ root, store, agentId, taskId }));
+      if (stopped || !(await waitForInterval(intervalMs, signal))) break;
+    }
+  } finally {
+    signal?.removeEventListener('abort', stop);
   }
+}
+
+function waitForInterval(intervalMs, signal) {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    const onAbort = () => finish(false);
+    const timer = setTimeout(() => finish(true), intervalMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export { rolloutFiles };
