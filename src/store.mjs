@@ -502,12 +502,14 @@ export class EventStore {
 
   importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path.resolve(filePath)}`, adapter }) {
     const absolutePath = path.resolve(filePath);
-    const bytes = fs.readFileSync(absolutePath);
-    const completeEnd = bytes.lastIndexOf(0x0a, bytes.length - 1) + 1;
     const transaction = this.database.transaction(() => {
       // Resolve the cursor after acquiring the write lock. Multiple watchers
       // may read the same rollout concurrently; each importer must make its
-      // decision from the cursor committed by the previous importer.
+      // decision from the cursor committed by the previous importer. Reading
+      // the file here also prevents a stale pre-lock snapshot from rewinding
+      // a cursor committed while this importer was waiting for the lock.
+      const bytes = fs.readFileSync(absolutePath);
+      const completeEnd = bytes.lastIndexOf(0x0a, bytes.length - 1) + 1;
       const cursor = this.database.prepare('SELECT byte_offset, prefix_hash FROM ingest_cursors WHERE source_key = ?').get(sourceKey);
       const currentPrefixHash = cursor?.prefix_hash && cursor.byte_offset <= bytes.length
         ? crypto.createHash('sha256').update(bytes.subarray(0, cursor.byte_offset)).digest('hex')
