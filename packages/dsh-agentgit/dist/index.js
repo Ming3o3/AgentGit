@@ -417,7 +417,16 @@ function repoDbPath(repo) {
   return path2.join(path2.resolve(repo), ".agentgit", "events.db");
 }
 function migrateDatabase(database) {
-  database.pragma("journal_mode = WAL");
+  database.pragma("busy_timeout = 10000");
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      database.pragma("journal_mode = WAL");
+      break;
+    } catch (error) {
+      if (error?.code !== "SQLITE_BUSY" || attempt >= 100) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
   database.pragma("foreign_keys = ON");
   database.exec("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   const migrate = database.transaction(() => {
@@ -1320,13 +1329,16 @@ function createCheckpoint({ repo, store, agentId, summary, taskId = null, sessio
     }
   }
   const state = gitState(repo);
-  const commitPatch = committed && state.head ? git(repo, ["show", "--format=", "--binary", "--no-ext-diff", state.head, "--", ...WORKTREE_PATHS]) : "";
-  const patch = commitPatch || [
-    state.stagedDiff && `# staged
-${state.stagedDiff}`,
-    state.unstagedDiff && `# unstaged
-${state.unstagedDiff}`
-  ].filter(Boolean).join("\n");
+  const patches = [];
+  if (committed && state.head) {
+    patches.push(`# committed ${state.head}
+${git(repo, ["show", "--format=", "--binary", "--no-ext-diff", state.head, "--", ...WORKTREE_PATHS])}`);
+  }
+  if (state.stagedDiff) patches.push(`# staged
+${state.stagedDiff}`);
+  if (state.unstagedDiff) patches.push(`# unstaged
+${state.unstagedDiff}`);
+  const patch = patches.join("\n");
   const diff = putObject(repo, patch);
   return store.append({
     agentId,
