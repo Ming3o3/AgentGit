@@ -333,6 +333,38 @@ test('reports malformed task event types without crashing the audit', () => {
   store.close();
 });
 
+test('audits ingest cursor and source projection consistency', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  store.append({
+    agentId: 'coder',
+    type: 'agent.message',
+    payload: { text: 'imported' },
+    ingest: {
+      sourceKey: 'codex:audit',
+      sourceOffset: 0,
+      filePath: '/tmp/rollout-audit.jsonl',
+      nextOffset: 10,
+      prefixHash: 'a'.repeat(64),
+    },
+  });
+  assert.equal(store.verifyAll().valid, true);
+
+  store.database.prepare(`
+    UPDATE ingest_cursors SET byte_offset = 0, prefix_hash = 'invalid' WHERE source_key = 'codex:audit'
+  `).run();
+  const corrupt = store.verifyAll();
+  assert.equal(corrupt.checked.ingestCursors, 1);
+  assert.ok(corrupt.issues.some((issue) => issue.kind === 'ingest_cursor_prefix_invalid'));
+  assert.ok(corrupt.issues.some((issue) => issue.kind === 'ingest_cursor_behind_events'));
+
+  store.database.prepare("DELETE FROM ingest_cursors WHERE source_key = 'codex:audit'").run();
+  const missing = store.verifyAll();
+  assert.ok(missing.issues.some((issue) => issue.kind === 'ingest_cursor_missing' && issue.sourceKey === 'codex:audit'));
+  store.close();
+});
+
 test('rejects a missing parent and never writes a partial event', () => {
   const repo = tempRepo();
   initRepository(repo);

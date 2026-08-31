@@ -905,7 +905,7 @@ export class EventStore {
 
   verifyAll() {
     const issues = [];
-    const checked = { events: 0, eventOrder: 0, refs: 0, deliveries: 0, objects: 0, sourceEvents: 0, tasks: 0 };
+    const checked = { events: 0, eventOrder: 0, refs: 0, deliveries: 0, objects: 0, sourceEvents: 0, ingestCursors: 0, tasks: 0 };
     const rows = this.database.prepare(`
       SELECT events.*, event_order.sequence AS event_sequence
       FROM events LEFT JOIN event_order ON event_order.event_id = events.id
@@ -1033,14 +1033,48 @@ export class EventStore {
       }
     }
 
-    for (const source of this.database.prepare(`
+    const sourceOffsets = new Map();
+    const sourceRows = this.database.prepare(`
       SELECT source_events.source_key, source_events.source_offset, source_events.event_id, events.id AS existing_event_id
       FROM source_events LEFT JOIN events ON events.id = source_events.event_id
-    `).all()) {
+    `).all();
+    for (const source of sourceRows) {
       checked.sourceEvents += 1;
       if (!source.existing_event_id) {
         addIssue(issues, { kind: 'source_event_missing', sourceKey: source.source_key, sourceOffset: source.source_offset, eventId: source.event_id });
       }
+      if (!Number.isSafeInteger(source.source_offset) || source.source_offset < 0) {
+        addIssue(issues, { kind: 'source_offset_invalid', sourceKey: source.source_key, sourceOffset: source.source_offset });
+      }
+      const maximum = sourceOffsets.get(source.source_key);
+      if (maximum === undefined || source.source_offset > maximum) sourceOffsets.set(source.source_key, source.source_offset);
+    }
+    const cursorRows = this.database.prepare(`
+      SELECT source_key, file_path, byte_offset, prefix_hash FROM ingest_cursors
+    `).all();
+    const cursorKeys = new Set();
+    for (const cursor of cursorRows) {
+      checked.ingestCursors += 1;
+      cursorKeys.add(cursor.source_key);
+      if (typeof cursor.source_key !== 'string' || !cursor.source_key.trim()) {
+        addIssue(issues, { kind: 'ingest_cursor_key_invalid', sourceKey: cursor.source_key });
+      }
+      if (typeof cursor.file_path !== 'string' || !cursor.file_path.trim()) {
+        addIssue(issues, { kind: 'ingest_cursor_path_invalid', sourceKey: cursor.source_key });
+      }
+      if (!Number.isSafeInteger(cursor.byte_offset) || cursor.byte_offset < 0) {
+        addIssue(issues, { kind: 'ingest_cursor_offset_invalid', sourceKey: cursor.source_key, byteOffset: cursor.byte_offset });
+      }
+      if (cursor.prefix_hash !== null && !/^[a-f0-9]{64}$/iu.test(cursor.prefix_hash)) {
+        addIssue(issues, { kind: 'ingest_cursor_prefix_invalid', sourceKey: cursor.source_key });
+      }
+      const maximum = sourceOffsets.get(cursor.source_key);
+      if (maximum !== undefined && Number.isSafeInteger(cursor.byte_offset) && maximum >= cursor.byte_offset) {
+        addIssue(issues, { kind: 'ingest_cursor_behind_events', sourceKey: cursor.source_key, byteOffset: cursor.byte_offset, sourceOffset: maximum });
+      }
+    }
+    for (const sourceKey of sourceOffsets.keys()) {
+      if (!cursorKeys.has(sourceKey)) addIssue(issues, { kind: 'ingest_cursor_missing', sourceKey });
     }
 
     const expectedTasks = expectedTaskProjection(orderedEvents, (issue) => addIssue(issues, issue));
