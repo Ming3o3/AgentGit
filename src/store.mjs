@@ -273,7 +273,22 @@ export function repoDbPath(repo) {
 }
 
 function migrateDatabase(database) {
-  database.pragma('journal_mode = WAL');
+  // Multiple CLI/MCP/Harness processes can initialize the same repository at
+  // once. Let SQLite wait briefly for the connection already migrating before
+  // failing with SQLITE_BUSY during journal setup or the migration lock.
+  database.pragma('busy_timeout = 10000');
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      database.pragma('journal_mode = WAL');
+      break;
+    } catch (error) {
+      if (error?.code !== 'SQLITE_BUSY' || attempt >= 100) throw error;
+      // better-sqlite3 may return SQLITE_BUSY immediately for journal-mode
+      // changes even with busy_timeout configured. Yield briefly and retry;
+      // the migration transaction is short and remains bounded at ~1 second.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
   database.pragma('foreign_keys = ON');
   database.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const migrate = database.transaction(() => {
