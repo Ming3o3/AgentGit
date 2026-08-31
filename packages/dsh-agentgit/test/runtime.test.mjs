@@ -67,6 +67,32 @@ test('captureSessionEvents disables disposed-session records as well', () => {
   for (const dispose of effects) dispose?.();
 });
 
+test('records capture failures without propagating host event errors', () => {
+  const { repo, listeners, effects } = fixture();
+  const malformed = {};
+  Object.defineProperty(malformed, 'type', {
+    get() { throw new Error('api_key=runtime-secret'); },
+  });
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    assert.doesNotThrow(() => listeners.get('session/event')({ id: 'session-bad' }, malformed));
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].includes('runtime-secret'), false);
+  const store = new EventStore(repo);
+  const failures = store.list({ type: 'capture.failed', limit: 10 });
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].payload.source, 'session/event');
+  assert.equal(failures[0].payload.error.includes('runtime-secret'), false);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+  for (const dispose of effects) dispose?.();
+});
+
 test('captures Harness tool results with execution identity and content', () => {
   const { repo, listeners, effects } = fixture();
   listeners.get('tools/result')(

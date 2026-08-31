@@ -1600,38 +1600,63 @@ function registerTools(ctx, store, config) {
     }
   });
 }
+function appendCaptured(store, config, build, source) {
+  try {
+    const input = build();
+    return input ? store.append(input) : null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`agentgit: failed to capture ${source}: ${redactText(message)}`);
+    try {
+      return store.append({
+        agentId: config.agentId,
+        type: "capture.failed",
+        ref: `agent/${config.agentId}`,
+        payload: { source, error: message }
+      });
+    } catch (fallbackError) {
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      console.error(`agentgit: failed to record capture failure: ${redactText(fallbackMessage)}`);
+      return null;
+    }
+  }
+}
 function apply(ctx, config) {
   initRepository(config.repo);
   const store = new EventStore(config.repo);
   ctx.effect(() => () => store.close());
   const recordSessionEvent = (session, event) => {
-    if (!config.captureSessionEvents || !event?.type) return;
-    const sessionId = sessionIdOf(session);
-    const sourceKey = sessionId ? `harness:${sessionId}` : null;
-    const sourceOffset = Number.isInteger(event.seq) ? event.seq : null;
-    store.append({
-      agentId: config.agentId,
-      type: SESSION_EVENT_TYPES[event.type] ?? `harness.${event.type.replaceAll("/", ".")}`,
-      payload: sessionPayload(event),
-      sessionId,
-      ref: sessionId ? `session/${sessionId}` : `agent/${config.agentId}`,
-      source: sourceForSession(session, event),
-      ...sourceKey && sourceOffset !== null ? {
-        ingest: {
-          sourceKey,
-          sourceOffset,
-          filePath: `harness://${sessionId}`,
-          nextOffset: sourceOffset + 1
-        }
-      } : {}
-    });
+    if (!config.captureSessionEvents) return;
+    appendCaptured(store, config, () => {
+      const eventType = event?.type;
+      if (!eventType) return null;
+      const sessionId = sessionIdOf(session);
+      const sourceKey = sessionId ? `harness:${sessionId}` : null;
+      const sourceOffset = Number.isInteger(event.seq) ? event.seq : null;
+      return {
+        agentId: config.agentId,
+        type: SESSION_EVENT_TYPES[eventType] ?? `harness.${eventType.replaceAll("/", ".")}`,
+        payload: sessionPayload(event),
+        sessionId,
+        ref: sessionId ? `session/${sessionId}` : `agent/${config.agentId}`,
+        source: sourceForSession(session, event),
+        ...sourceKey && sourceOffset !== null ? {
+          ingest: {
+            sourceKey,
+            sourceOffset,
+            filePath: `harness://${sessionId}`,
+            nextOffset: sourceOffset + 1
+          }
+        } : {}
+      };
+    }, "session/event");
   };
   if (config.captureSessionEvents) {
     ctx.on("session/event", recordSessionEvent);
   }
   if (config.captureToolResults) {
     ctx.on("tools/result", (exec, result) => {
-      store.append({
+      appendCaptured(store, config, () => ({
         agentId: config.agentId,
         type: "tool.runtime_result",
         sessionId: exec?.sessionId == null ? null : String(exec.sessionId),
@@ -1644,19 +1669,19 @@ function apply(ctx, config) {
           meta: runtimeValue(result?.meta ?? null)
         },
         source: { adapter: "deepseek-harness", event: "tools/result" }
-      });
+      }), "tools/result");
     });
   }
   if (config.captureSessionEvents) {
     ctx.on("session/disposed", (session) => {
-      store.append({
+      appendCaptured(store, config, () => ({
         agentId: config.agentId,
         type: "session.disposed",
         sessionId: sessionIdOf(session),
         ref: `agent/${config.agentId}`,
         payload: { sessionId: sessionIdOf(session) },
         source: { adapter: "deepseek-harness", event: "session/disposed" }
-      });
+      }), "session/disposed");
     });
   }
   registerTools(ctx, store, config);
