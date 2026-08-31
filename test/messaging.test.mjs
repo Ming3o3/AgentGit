@@ -73,3 +73,31 @@ test('rejects acknowledgement for a recipient that was not addressed', () => {
   assert.throws(() => store.acknowledge(message.id, 'reviewer'), /delivery does not exist/);
   store.close();
 });
+
+test('audits delivery state timestamps and chronology', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const pending = store.sendMessage({ from: 'planner', to: 'coder', text: 'Pending' });
+  const acknowledged = store.sendMessage({ from: 'planner', to: 'reviewer', text: 'Acknowledged' });
+  store.acknowledge(acknowledged.id, 'reviewer');
+  assert.equal(store.verifyAll().valid, true);
+
+  store.database.prepare(`
+    UPDATE deliveries SET delivered_at = 'not-a-timestamp'
+    WHERE event_id = ? AND recipient_id = 'coder'
+  `).run(pending.id);
+  store.database.prepare(`
+    UPDATE deliveries SET created_at = '2099-01-01T00:00:00.000Z',
+      delivered_at = '2099-01-02T00:00:00.000Z', acknowledged_at = '2099-01-01T00:00:00.000Z'
+    WHERE event_id = ? AND recipient_id = 'reviewer'
+  `).run(acknowledged.id);
+
+  const audit = store.verifyAll();
+  assert.equal(audit.valid, false);
+  assert.ok(audit.issues.some((issue) => issue.kind === 'invalid_delivery_delivered_at' && issue.eventId === pending.id));
+  assert.ok(audit.issues.some((issue) => issue.kind === 'invalid_delivery_state_timestamps' && issue.eventId === pending.id));
+  assert.ok(audit.issues.some((issue) => issue.kind === 'invalid_delivery_created_at' && issue.eventId === acknowledged.id));
+  assert.ok(audit.issues.some((issue) => issue.kind === 'invalid_delivery_timestamp_order' && issue.eventId === acknowledged.id));
+  store.close();
+});

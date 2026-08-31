@@ -201,6 +201,12 @@ function validateLimit(limit) {
   return limit;
 }
 
+function validIsoTimestamp(value) {
+  if (typeof value !== 'string') return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
 function expectedTaskProjection(events, addAuditIssue) {
   const tasks = new Map();
   for (const event of events) {
@@ -990,16 +996,52 @@ export class EventStore {
     }
 
     const deliveries = new Map();
-    for (const delivery of this.database.prepare('SELECT event_id, recipient_id, status FROM deliveries').all()) {
+    for (const delivery of this.database.prepare(`
+      SELECT event_id, recipient_id, status, created_at, delivered_at, acknowledged_at
+      FROM deliveries
+    `).all()) {
       checked.deliveries += 1;
-      if (!events.has(delivery.event_id)) {
+      const event = events.get(delivery.event_id);
+      if (!event) {
         addIssue(issues, { kind: 'delivery_missing_event', eventId: delivery.event_id, recipientId: delivery.recipient_id });
         continue;
       }
       const recipients = deliveries.get(delivery.event_id) ?? [];
       recipients.push(delivery.recipient_id);
       deliveries.set(delivery.event_id, recipients);
+      if (typeof delivery.recipient_id !== 'string' || !delivery.recipient_id.trim()) {
+        addIssue(issues, { kind: 'invalid_delivery_recipient', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+      }
       if (!DELIVERY_STATUSES.has(delivery.status)) addIssue(issues, { kind: 'invalid_delivery_status', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+      if (!validIsoTimestamp(delivery.created_at) || delivery.created_at !== event.created_at) {
+        addIssue(issues, {
+          kind: 'invalid_delivery_created_at', eventId: delivery.event_id, recipientId: delivery.recipient_id,
+          expected: event.created_at, actual: delivery.created_at,
+        });
+      }
+      if (delivery.delivered_at !== null && !validIsoTimestamp(delivery.delivered_at)) {
+        addIssue(issues, { kind: 'invalid_delivery_delivered_at', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+      }
+      if (delivery.acknowledged_at !== null && !validIsoTimestamp(delivery.acknowledged_at)) {
+        addIssue(issues, { kind: 'invalid_delivery_acknowledged_at', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+      }
+      const stateTimestampsValid = (delivery.status === 'pending'
+        && delivery.delivered_at === null && delivery.acknowledged_at === null)
+        || (delivery.status === 'delivered'
+          && delivery.delivered_at !== null && delivery.acknowledged_at === null)
+        || (delivery.status === 'acknowledged'
+          && delivery.delivered_at !== null && delivery.acknowledged_at !== null);
+      if (!stateTimestampsValid) {
+        addIssue(issues, { kind: 'invalid_delivery_state_timestamps', eventId: delivery.event_id, recipientId: delivery.recipient_id, status: delivery.status });
+      }
+      if (validIsoTimestamp(delivery.created_at) && validIsoTimestamp(delivery.delivered_at)
+        && delivery.created_at > delivery.delivered_at) {
+        addIssue(issues, { kind: 'invalid_delivery_timestamp_order', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+      }
+      if (validIsoTimestamp(delivery.delivered_at) && validIsoTimestamp(delivery.acknowledged_at)
+        && delivery.delivered_at > delivery.acknowledged_at) {
+        addIssue(issues, { kind: 'invalid_delivery_timestamp_order', eventId: delivery.event_id, recipientId: delivery.recipient_id });
+      }
     }
     for (const [eventId, event] of events) {
       const recipients = deliveries.get(eventId) ?? [];
