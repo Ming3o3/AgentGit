@@ -144,6 +144,23 @@ test('Harness task listing includes unassigned tasks and supports assignee filte
   for (const dispose of effects) dispose?.();
 });
 
+test('Harness tool schemas constrain enums and integer limits', async () => {
+  const { tools, effects } = fixture();
+  const readInbox = tools.find((tool) => tool.name === 'agentgit_read_inbox');
+  const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
+  const updateTask = tools.find((tool) => tool.name === 'agentgit_update_task');
+  const listTasks = tools.find((tool) => tool.name === 'agentgit_list_tasks');
+
+  assert.deepEqual(readInbox.parameters.properties.status.enum, ['pending', 'delivered', 'acknowledged']);
+  assert.equal(readInbox.parameters.properties.limit.type, 'integer');
+  assert.deepEqual(createTask.parameters.properties.priority.enum, ['low', 'normal', 'high', 'urgent']);
+  assert.deepEqual(updateTask.parameters.properties.status.enum, ['assigned', 'in_progress', 'blocked', 'completed', 'cancelled']);
+  assert.deepEqual(listTasks.parameters.properties.status.enum, ['open', 'assigned', 'in_progress', 'blocked', 'completed', 'cancelled']);
+  await assert.rejects(() => readInbox.execute({ status: 'unknown' }), /must be one of/);
+  await assert.rejects(() => listTasks.execute({ limit: 1.5 }), /must be an integer/);
+  for (const dispose of effects) dispose?.();
+});
+
 test('combined Harness task updates are atomic', async () => {
   const { repo, tools, effects } = fixture();
   const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');

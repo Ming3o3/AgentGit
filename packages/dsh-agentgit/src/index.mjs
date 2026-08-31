@@ -29,6 +29,10 @@ const SESSION_EVENT_TYPES = {
   'compaction/summary': 'session.compaction.summary',
   'compaction/end': 'session.compaction.ended',
 };
+const DELIVERY_STATUSES = ['pending', 'delivered', 'acknowledged'];
+const TASK_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+const TASK_STATUSES = ['open', 'assigned', 'in_progress', 'blocked', 'completed', 'cancelled'];
+const TASK_UPDATE_STATUSES = TASK_STATUSES.filter((status) => status !== 'open');
 
 function sessionIdOf(session) {
   return session?.id == null ? null : String(session.id);
@@ -95,13 +99,21 @@ function stringParameter(required = false, description) {
   return { type: 'string', ...(required ? { required: true } : {}), ...(description ? { description } : {}) };
 }
 
+function enumParameter(values, description) {
+  return { type: 'string', enum: values, ...(description ? { description } : {}) };
+}
+
+function limitParameter(description = 'Maximum number of records to return, from 1 through 10000.') {
+  return { type: 'integer', description };
+}
+
 function registerTools(ctx, store, config) {
   arrayTool(ctx, {
     name: 'agentgit_read_inbox',
     description: 'Read durable messages addressed to the configured AgentGit agent. Pending messages become delivered.',
     parameters: {
-      status: stringParameter(false, 'Optional delivery status: pending, delivered, or acknowledged.'),
-      limit: { type: 'number', description: 'Maximum number of messages to return.' },
+      status: enumParameter(DELIVERY_STATUSES, 'Optional delivery status.'),
+      limit: limitParameter('Maximum number of messages to return, from 1 through 10000.'),
     },
     async execute(args) {
       return store.receiveInbox({
@@ -152,7 +164,7 @@ function registerTools(ctx, store, config) {
     parameters: {
       title: stringParameter(true, 'Task title.'),
       description: stringParameter(false, 'Task description.'),
-      priority: stringParameter(false, 'low, normal, high, or urgent.'),
+      priority: enumParameter(TASK_PRIORITIES, 'Task priority.'),
     },
     async execute(args) {
       return store.createTask({
@@ -171,7 +183,7 @@ function registerTools(ctx, store, config) {
       taskId: stringParameter(true, 'Task ID.'),
       assigneeId: stringParameter(false, 'Agent to assign.'),
       note: stringParameter(false, 'Assignment note.'),
-      status: stringParameter(false, 'assigned, in_progress, blocked, completed, or cancelled.'),
+      status: enumParameter(TASK_UPDATE_STATUSES, 'Next task status.'),
       summary: stringParameter(false, 'Status transition summary.'),
     },
     async execute(args) {
@@ -192,7 +204,7 @@ function registerTools(ctx, store, config) {
     description: 'Read the immutable event history for a task.',
     parameters: {
       taskId: stringParameter(true, 'Task ID.'),
-      limit: { type: 'number' },
+      limit: limitParameter(),
     },
     async execute(args) {
       return store.list({ taskId: args.taskId, limit: args.limit ?? 100 });
@@ -204,8 +216,8 @@ function registerTools(ctx, store, config) {
     description: 'List task state reconstructed from immutable task events.',
     parameters: {
       assigneeId: stringParameter(false, 'Optional agent ID to filter by assignee.'),
-      status: stringParameter(false, 'Optional task status.'),
-      limit: { type: 'number' },
+      status: enumParameter(TASK_STATUSES, 'Optional task status.'),
+      limit: limitParameter(),
     },
     async execute(args) {
       return store.listTasks({ assigneeId: args?.assigneeId ?? null, status: args?.status ?? null, limit: args?.limit ?? 100 });
