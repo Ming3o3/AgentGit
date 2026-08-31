@@ -632,9 +632,9 @@ var EventStore = class {
   }
   importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path2.resolve(filePath)}`, adapter }) {
     const absolutePath = path2.resolve(filePath);
-    const bytes = fs2.readFileSync(absolutePath);
-    const completeEnd = bytes.lastIndexOf(10, bytes.length - 1) + 1;
     const transaction = this.database.transaction(() => {
+      const bytes = fs2.readFileSync(absolutePath);
+      const completeEnd = bytes.lastIndexOf(10, bytes.length - 1) + 1;
       const cursor = this.database.prepare("SELECT byte_offset, prefix_hash FROM ingest_cursors WHERE source_key = ?").get(sourceKey);
       const currentPrefixHash = cursor?.prefix_hash && cursor.byte_offset <= bytes.length ? crypto3.createHash("sha256").update(bytes.subarray(0, cursor.byte_offset)).digest("hex") : null;
       const rewound = Boolean(cursor && (cursor.byte_offset > bytes.length || completeEnd < cursor.byte_offset || cursor.prefix_hash && currentPrefixHash !== cursor.prefix_hash));
