@@ -68,6 +68,52 @@ test('externalizes large payload text to a content-addressed object', () => {
   store.close();
 });
 
+test('normalizes runtime-only payload values before hashing', () => {
+  const repo = tempRepo();
+  initRepository(repo);
+  const store = new EventStore(repo);
+  const circular = { name: 'runtime' };
+  circular.self = circular;
+  let getterReads = 0;
+  const withGetter = {};
+  Object.defineProperty(withGetter, 'dangerous', { enumerable: true, get() { getterReads += 1; return 'secret'; } });
+  const event = store.append({
+    agentId: 'harness',
+    type: 'tool.runtime_result',
+    payload: {
+      circular,
+      count: 42n,
+      omitted: undefined,
+      nonFinite: Number.POSITIVE_INFINITY,
+      negativeZero: -0,
+      when: new Date('2026-08-31T00:00:00.000Z'),
+      bytes: Buffer.from('hello'),
+      error: Object.assign(new Error('failed'), { code: 'E_TEST' }),
+      map: new Map([['key', 'value']]),
+      set: new Set(['item']),
+      withGetter,
+      callback: function runtimeCallback() {},
+    },
+  });
+  assert.deepEqual(event.payload, {
+    circular: { name: 'runtime', self: '[Circular]' },
+    count: '42n',
+    omitted: null,
+    nonFinite: null,
+    negativeZero: 0,
+    when: '2026-08-31T00:00:00.000Z',
+    bytes: { encoding: 'base64', data: 'aGVsbG8=', bytes: 5 },
+    error: { name: 'Error', message: 'failed', code: 'E_TEST' },
+    map: [['key', 'value']],
+    set: ['item'],
+    withGetter: { dangerous: '[Accessor]' },
+    callback: '[Function: runtimeCallback]',
+  });
+  assert.equal(getterReads, 0);
+  assert.equal(store.verifyAll().valid, true);
+  store.close();
+});
+
 test('rejects malformed object references before touching the filesystem', () => {
   const repo = tempRepo();
   assert.throws(() => objectPath(repo, '../outside'), /invalid object hash/);

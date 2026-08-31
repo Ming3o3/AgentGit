@@ -23,8 +23,13 @@ export function redactText(text) {
   return result;
 }
 
-export function sanitizePayload(value, repo, key = null) {
+export function sanitizePayload(value, repo, key = null, seen = new WeakSet()) {
   if (key !== null && SENSITIVE_KEYS.test(key)) return '[REDACTED]';
+  if (value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? (Object.is(value, -0) ? 0 : value) : null;
+  if (typeof value === 'bigint') return `${value}n`;
+  if (typeof value === 'function') return value.name ? `[Function: ${value.name}]` : '[Function]';
+  if (typeof value === 'symbol') return value.description ? `[Symbol: ${value.description}]` : '[Symbol]';
   if (typeof value === 'string') {
     const safe = redactText(value);
     if (Buffer.byteLength(safe, 'utf8') <= INLINE_LIMIT) return safe;
@@ -35,9 +40,73 @@ export function sanitizePayload(value, repo, key = null) {
       preview: `${safe.slice(0, 512)}…`,
     };
   }
-  if (Array.isArray(value)) return value.map((item) => sanitizePayload(item, repo));
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  if (value instanceof RegExp || value instanceof URL) return String(value);
+  if (value instanceof Error) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const sanitized = {
+      name: sanitizePayload(value.name, repo, 'name', seen),
+      message: sanitizePayload(value.message, repo, 'message', seen),
+      ...(value.code !== undefined ? { code: sanitizePayload(value.code, repo, 'code', seen) } : {}),
+      ...(value.cause !== undefined ? { cause: sanitizePayload(value.cause, repo, 'cause', seen) } : {}),
+    };
+    seen.delete(value);
+    return sanitized;
+  }
+  if (Buffer.isBuffer(value) || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    const bytes = Buffer.isBuffer(value)
+      ? value
+      : value instanceof ArrayBuffer
+        ? Buffer.from(value)
+        : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    const encoded = bytes.toString('base64');
+    if (Buffer.byteLength(encoded, 'utf8') <= INLINE_LIMIT) {
+      return { encoding: 'base64', data: encoded, bytes: bytes.length };
+    }
+    const object = putObject(repo, bytes);
+    return { objectRef: object.hash, bytes: object.bytes, encoding: 'binary' };
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const sanitized = value.map((item) => sanitizePayload(item, repo, null, seen));
+    seen.delete(value);
+    return sanitized;
+  }
+  if (value instanceof Map) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const sanitized = [...value.entries()].map(([entryKey, item]) => [
+      sanitizePayload(entryKey, repo, null, seen),
+      sanitizePayload(item, repo, null, seen),
+    ]);
+    seen.delete(value);
+    return sanitized;
+  }
+  if (value instanceof Set) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const sanitized = [...value].map((item) => sanitizePayload(item, repo, null, seen));
+    seen.delete(value);
+    return sanitized;
+  }
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([childKey, item]) => [childKey, sanitizePayload(item, repo, childKey)]));
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    let descriptors;
+    try { descriptors = Object.getOwnPropertyDescriptors(value); } catch {
+      seen.delete(value);
+      return '[Unserializable]';
+    }
+    const sanitized = Object.fromEntries(Object.entries(descriptors)
+      .filter(([, descriptor]) => descriptor.enumerable)
+      .map(([childKey, descriptor]) => [
+        childKey,
+        'value' in descriptor ? sanitizePayload(descriptor.value, repo, childKey, seen) : '[Accessor]',
+      ]));
+    seen.delete(value);
+    return sanitized;
   }
   return value;
 }
