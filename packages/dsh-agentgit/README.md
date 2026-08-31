@@ -49,6 +49,12 @@ dsh plugin --profile agentgit-dev add /absolute/path/to/dsh-agentgit
 随后可以运行 `dsh --profile agentgit-dev --dump-config` 检查组合结果，再启动
 `dsh --profile agentgit-dev`。
 
+插件向 Harness 注册以下工具：
+
+- `agentgit_read_inbox`、`agentgit_send_message`、`agentgit_acknowledge_message`
+- `agentgit_create_task`、`agentgit_update_task`、`agentgit_task_history`、`agentgit_list_tasks`
+- `agentgit_create_checkpoint`、`agentgit_verify_history`、`agentgit_rebuild_task_projection`
+
 ## Web UI 历史面板
 
 安装到带 Web UI 的 Harness profile 后，侧边栏底部会出现 `AgentGit` 按钮。

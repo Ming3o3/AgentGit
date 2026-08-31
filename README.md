@@ -68,7 +68,9 @@ The MCP tools are:
 - `read_inbox` and `acknowledge_message`
 - `send_message`
 - `get_event` and `task_history`
+- `create_task`, `assign_task`, `update_task_status`, and `list_tasks`
 - `create_checkpoint`
+- `verify_history` and `rebuild_task_projection`
 
 The included Codex plugin skill at [`skills/agentgit/SKILL.md`](skills/agentgit/SKILL.md)
 describes the intended collaboration workflow once those tools are configured.
@@ -104,8 +106,9 @@ For local source development, add a patch overlay to a Harness profile:
 For a bundle install, use the package's `cordis.patch.yml` and override the
 same `repo` and `agentId` fields in the profile patch. The plugin exposes
 `agentgit_read_inbox`, `agentgit_send_message`, `agentgit_acknowledge_message`,
-task tools, `agentgit_create_checkpoint`, `agentgit_verify_history`, and
-`agentgit_rebuild_task_projection`.
+`agentgit_create_task`, `agentgit_update_task`, `agentgit_task_history`,
+`agentgit_list_tasks`, `agentgit_create_checkpoint`, `agentgit_verify_history`,
+and `agentgit_rebuild_task_projection`.
 Harness session events are imported idempotently by `(sessionId, event.seq)`;
 the original event payload remains in AgentGit's immutable event DAG.
 
