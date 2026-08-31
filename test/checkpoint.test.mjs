@@ -52,6 +52,25 @@ test('can commit an explicit checkpoint and records the resulting commit', () =>
   store.close();
 });
 
+test('records worktree changes left behind by commit hooks', () => {
+  const repo = gitRepo();
+  initRepository(repo);
+  fs.appendFileSync(path.join(repo, 'README.md'), 'committed\n');
+  const hook = path.join(repo, '.git', 'hooks', 'pre-commit');
+  fs.writeFileSync(hook, '#!/bin/sh\nprintf "hook-change\\n" >> README.md\n');
+  fs.chmodSync(hook, 0o755);
+  const store = new EventStore(repo);
+  const checkpoint = createCheckpoint({ repo, store, agentId: 'coder', summary: 'Commit with hook output', commit: true });
+  const patch = readObject(repo, checkpoint.payload.diff.hash).toString();
+  assert.equal(checkpoint.payload.committed, true);
+  assert.deepEqual(checkpoint.payload.git.status, [{ code: ' M', path: 'README.md' }]);
+  assert.match(patch, /^# committed /u);
+  assert.match(patch, /\+committed/u);
+  assert.match(patch, /# unstaged/u);
+  assert.match(patch, /\+hook-change/u);
+  store.close();
+});
+
 test('records a clean checkpoint when commit is requested without changes', () => {
   const repo = gitRepo();
   initRepository(repo);

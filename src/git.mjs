@@ -70,13 +70,13 @@ export function createCheckpoint({ repo, store, agentId, summary, taskId = null,
     }
   }
   const state = gitState(repo);
-  const commitPatch = committed && state.head
-    ? git(repo, ['show', '--format=', '--binary', '--no-ext-diff', state.head, '--', ...WORKTREE_PATHS])
-    : '';
-  const patch = commitPatch || [
-      state.stagedDiff && `# staged\n${state.stagedDiff}`,
-      state.unstagedDiff && `# unstaged\n${state.unstagedDiff}`,
-    ].filter(Boolean).join('\n');
+  const patches = [];
+  if (committed && state.head) {
+    patches.push(`# committed ${state.head}\n${git(repo, ['show', '--format=', '--binary', '--no-ext-diff', state.head, '--', ...WORKTREE_PATHS])}`);
+  }
+  if (state.stagedDiff) patches.push(`# staged\n${state.stagedDiff}`);
+  if (state.unstagedDiff) patches.push(`# unstaged\n${state.unstagedDiff}`);
+  const patch = patches.join('\n');
   const diff = putObject(repo, patch);
   return store.append({
     agentId,
