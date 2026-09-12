@@ -13,6 +13,18 @@ AgentGit records only observable collaboration facts: explicit messages, tool
 calls and outputs exposed by the source agent, task events, Git checkpoints,
 and message-delivery state. It does not record hidden reasoning or tokens.
 
+## Documentation
+
+- [Architecture and data model](docs/architecture.md)
+- [CLI, MCP, and HTTP API reference](docs/api.md)
+- [Operations, verification, backup, and recovery](docs/operations.md)
+- [End-to-end multi-agent example](docs/examples/end-to-end.md)
+
+AgentGit is intentionally local-first. A target project and every AgentGit
+process collaborating on it must share the same `.agentgit/` directory. Remote
+replication and distributed ref reconciliation are not part of the current
+product scope.
+
 ## Install
 
 ```sh
@@ -290,6 +302,18 @@ append-only; refs and delivery state are the mutable projections.
 ```sh
 npm test
 npm run lint
-python3 /Users/ming/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
 npm pack --dry-run
 ```
+
+## Current limits
+
+- AgentGit coordinates processes that share one local event store; it does not
+  synchronize histories between machines.
+- SQLite transactions serialize appends to the same ref, but AgentGit does not
+  merge source-code conflicts or competing task decisions for agents.
+- Task state is rebuildable from immutable events. Arbitrary historical
+  projections and worktree restoration are not yet exposed as commands.
+- Codex and DeepSeek Harness session events can be imported, but there is not
+  yet a portable full-store export format.
+- The dashboard reports operational counts and recent activity, not latency,
+  throughput, resource usage, or external notifications.

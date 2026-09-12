@@ -7,6 +7,7 @@
   "files": [
     "src",
     "skills",
+    "docs",
     ".codex-plugin",
     "README.md",
     "LICENSE"
