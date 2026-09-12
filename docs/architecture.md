@@ -52,7 +52,7 @@ Every immutable event returned by AgentGit has this shape:
   "payload": { "status": "completed", "summary": "Tests pass" },
   "source": null,
   "createdAt": "2026-09-12T08:30:00.000Z",
-  "contentHash": "sha256:..."
+  "contentHash": "0123456789abcdef..."
 }
 ```
 
