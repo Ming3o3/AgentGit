@@ -55,6 +55,10 @@ Unless stated otherwise, `--repo` is required and limits default to 100.
 | `show` | `--repo`, positional event ID | none | Return one event or `null` |
 | `verify` | `--repo`, event ID or `--all` | none | Verify one event hash or audit the entire store |
 | `import-codex` | `--repo`, `--file`, `--agent` | `--task`, `--session`, `--ref` | Import complete Codex JSONL records from a resumable cursor |
+| `export` | `--repo`, `--file` | `--overwrite` | Write a versioned, verified full-store event bundle |
+| `backup` | `--repo`, `--file` | `--overwrite` | Alias of `export` for operational workflows |
+| `import` | `--repo`, `--file` | `--replace-mutable` | Restore an event bundle into an empty store or re-import the same history |
+| `schema-status` | `--repo` | none | Inspect compatibility and pending migrations without changing the database |
 | `watch-codex` | `--repo`, `--dir`, `--agent` | `--task`, `--interval` (minimum 50 ms), `--once` | Recursively watch `rollout-*.jsonl` files or scan once |
 | `send` | `--repo`, `--from`, `--to <csv>`, `--text` | `--subject`, `--task`, `--session`, `--causation`, `--ref` | Append one message and create per-recipient deliveries |
 | `inbox` | `--repo`, `--agent` | `--status`, `--limit`, `--peek` | Return messages; without `--peek`, pending rows become delivered |
@@ -133,3 +137,24 @@ transitions, unknown tasks, invalid recipients, unsupported future database
 versions, invalid query limits, and object integrity failures. Mutating
 operations use transactions: an error does not leave the event and its
 projection half-written.
+
+### Event bundle format
+
+Format identifier `agentgit.event-bundle`, version `1`, contains:
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | Source AgentGit database schema version |
+| `exportedAt` | ISO timestamp for bundle creation |
+| `events` | Complete events with their stable local `sequence` |
+| `refs` | Named event heads at export time |
+| `deliveries` | Per-recipient delivery snapshot |
+| `sourceEvents`, `ingestCursors` | Idempotent importer state |
+| `objects` | Referenced object bytes encoded as base64 |
+| `bundleHash` | SHA-256 of the canonical JSON body excluding this field |
+
+Import accepts only format version 1 and a source schema no newer than the
+installed AgentGit. It validates the complete bundle before database mutation.
+An existing destination must contain either zero events or the exact same full
+event history. With the latter, immutable events are skipped and mutable state
+is preserved unless `--replace-mutable` is explicitly set.

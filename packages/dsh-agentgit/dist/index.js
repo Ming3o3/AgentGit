@@ -164,7 +164,8 @@ function sha256(value) {
 }
 
 // ../../src/store.mjs
-var SCHEMA_VERSION = 3;
+var SUPPORTED_SCHEMA_VERSION = 3;
+var SCHEMA_VERSION = SUPPORTED_SCHEMA_VERSION;
 var TASK_STATUSES = /* @__PURE__ */ new Set(["open", "assigned", "in_progress", "blocked", "completed", "cancelled"]);
 var TASK_PRIORITIES = /* @__PURE__ */ new Set(["low", "normal", "high", "urgent"]);
 var DELIVERY_STATUSES = /* @__PURE__ */ new Set(["pending", "delivered", "acknowledged"]);
@@ -622,27 +623,152 @@ var EventStore = class {
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.database.prepare(`SELECT * FROM tasks ${where} ORDER BY updated_at DESC, task_id ASC LIMIT ?`).all(...values).map((row) => this.#hydrateTask(row));
   }
-  rebuildTaskProjection() {
-    const transaction = this.database.transaction(() => {
-      this.database.prepare("DELETE FROM tasks").run();
-      const rows = this.database.prepare(`
+  exportSnapshot() {
+    const read = this.database.transaction(() => ({
+      schemaVersion: Number(this.database.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get().value),
+      events: this.database.prepare(`
         SELECT events.*, event_order.sequence AS event_sequence
         FROM events JOIN event_order ON event_order.event_id = events.id
-        WHERE type IN ('task.created', 'task.assigned', 'task.status_changed')
-      `).all().map((row) => ({ ...this.#hydrate(row), eventSequence: row.event_sequence }));
-      const pending = new Map(rows.map((event) => [event.id, event]));
-      while (pending.size > 0) {
-        const ready = [...pending.values()].filter((event) => event.parents.every((parent) => !pending.has(parent)));
-        if (ready.length === 0) throw new Error("task event history has a causal cycle");
-        ready.sort((left, right) => left.eventSequence - right.eventSequence);
-        for (const event of ready) {
-          this.#projectTaskEvent(event);
-          pending.delete(event.id);
+        ORDER BY event_order.sequence ASC
+      `).all().map((row) => ({ sequence: row.event_sequence, ...this.#hydrate(row) })),
+      refs: this.refs().map((ref) => ({ name: ref.name, eventId: ref.event_id, updatedAt: ref.updated_at })),
+      deliveries: this.database.prepare(`
+        SELECT event_id, recipient_id, status, created_at, delivered_at, acknowledged_at
+        FROM deliveries ORDER BY event_id, recipient_id
+      `).all().map((row) => ({
+        eventId: row.event_id,
+        recipientId: row.recipient_id,
+        status: row.status,
+        createdAt: row.created_at,
+        deliveredAt: row.delivered_at,
+        acknowledgedAt: row.acknowledged_at
+      })),
+      sourceEvents: this.database.prepare(`
+        SELECT source_key, source_offset, event_id FROM source_events
+        ORDER BY source_key, source_offset
+      `).all().map((row) => ({ sourceKey: row.source_key, sourceOffset: row.source_offset, eventId: row.event_id })),
+      ingestCursors: this.database.prepare(`
+        SELECT source_key, file_path, byte_offset, prefix_hash, updated_at FROM ingest_cursors
+        ORDER BY source_key
+      `).all().map((row) => ({
+        sourceKey: row.source_key,
+        filePath: row.file_path,
+        byteOffset: row.byte_offset,
+        prefixHash: row.prefix_hash,
+        updatedAt: row.updated_at
+      }))
+    }));
+    return read.deferred();
+  }
+  importSnapshot(snapshot, { replaceMutable = false } = {}) {
+    const transaction = this.database.transaction(() => {
+      const existingRows = this.database.prepare(`
+        SELECT events.id, events.content_hash, event_order.sequence
+        FROM events JOIN event_order ON event_order.event_id = events.id
+        ORDER BY event_order.sequence
+      `).all();
+      const incomingById = new Map(snapshot.events.map((event) => [event.id, event]));
+      for (const row of existingRows) {
+        const incoming = incomingById.get(row.id);
+        if (!incoming || incoming.contentHash !== row.content_hash || incoming.sequence !== row.sequence) {
+          throw new Error("destination contains a different event history");
         }
       }
-      return rows.length;
+      if (existingRows.length !== 0 && existingRows.length !== snapshot.events.length) {
+        throw new Error("destination contains only part of this event history");
+      }
+      const importingEvents = existingRows.length === 0;
+      if (importingEvents) {
+        const insertEvent = this.database.prepare(`
+          INSERT INTO events
+            (id, task_id, session_id, agent_id, type, parents_json, causation_id,
+             payload_json, source_json, created_at, content_hash)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const insertOrder = this.database.prepare("INSERT INTO event_order(event_id, sequence) VALUES (?, ?)");
+        for (const event of snapshot.events) {
+          insertEvent.run(
+            event.id,
+            event.taskId,
+            event.sessionId,
+            event.agentId,
+            event.type,
+            canonicalJson(event.parents),
+            event.causationId,
+            canonicalJson(event.payload),
+            event.source === null ? null : canonicalJson(event.source),
+            event.createdAt,
+            event.contentHash
+          );
+          insertOrder.run(event.id, event.sequence);
+        }
+      }
+      if (importingEvents || replaceMutable) {
+        this.database.prepare("DELETE FROM deliveries").run();
+        this.database.prepare("DELETE FROM refs").run();
+        this.database.prepare("DELETE FROM source_events").run();
+        this.database.prepare("DELETE FROM ingest_cursors").run();
+        this.#rebuildTaskProjection();
+        const insertRef = this.database.prepare("INSERT INTO refs(name, event_id, updated_at) VALUES (?, ?, ?)");
+        for (const ref of snapshot.refs) insertRef.run(ref.name, ref.eventId, ref.updatedAt);
+        const insertDelivery = this.database.prepare(`
+          INSERT INTO deliveries(event_id, recipient_id, status, created_at, delivered_at, acknowledged_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `);
+        for (const delivery of snapshot.deliveries) {
+          insertDelivery.run(
+            delivery.eventId,
+            delivery.recipientId,
+            delivery.status,
+            delivery.createdAt,
+            delivery.deliveredAt,
+            delivery.acknowledgedAt
+          );
+        }
+        const insertSourceEvent = this.database.prepare(`
+          INSERT INTO source_events(source_key, source_offset, event_id) VALUES (?, ?, ?)
+        `);
+        for (const sourceEvent of snapshot.sourceEvents) {
+          insertSourceEvent.run(sourceEvent.sourceKey, sourceEvent.sourceOffset, sourceEvent.eventId);
+        }
+        const insertCursor = this.database.prepare(`
+          INSERT INTO ingest_cursors(source_key, file_path, byte_offset, prefix_hash, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+        `);
+        for (const cursor of snapshot.ingestCursors) {
+          insertCursor.run(cursor.sourceKey, cursor.filePath, cursor.byteOffset, cursor.prefixHash, cursor.updatedAt);
+        }
+      }
+      return {
+        importedEvents: importingEvents ? snapshot.events.length : 0,
+        skippedEvents: importingEvents ? 0 : snapshot.events.length,
+        replacedMutable: importingEvents || replaceMutable
+      };
     });
     return transaction.immediate();
+  }
+  rebuildTaskProjection() {
+    const transaction = this.database.transaction(() => this.#rebuildTaskProjection());
+    return transaction.immediate();
+  }
+  #rebuildTaskProjection() {
+    this.database.prepare("DELETE FROM tasks").run();
+    const rows = this.database.prepare(`
+      SELECT events.*, event_order.sequence AS event_sequence
+      FROM events JOIN event_order ON event_order.event_id = events.id
+      WHERE type IN ('task.created', 'task.assigned', 'task.status_changed')
+    `).all().map((row) => ({ ...this.#hydrate(row), eventSequence: row.event_sequence }));
+    const pending = new Map(rows.map((event) => [event.id, event]));
+    while (pending.size > 0) {
+      const ready = [...pending.values()].filter((event) => event.parents.every((parent) => !pending.has(parent)));
+      if (ready.length === 0) throw new Error("task event history has a causal cycle");
+      ready.sort((left, right) => left.eventSequence - right.eventSequence);
+      for (const event of ready) {
+        this.#projectTaskEvent(event);
+        pending.delete(event.id);
+      }
+    }
+    return rows.length;
   }
   importJsonl({ filePath, agentId, taskId = null, sessionId = null, ref = null, sourceKey = `jsonl:${path2.resolve(filePath)}`, adapter }) {
     const absolutePath = path2.resolve(filePath);

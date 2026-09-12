@@ -55,6 +55,23 @@ test('CLI audits the complete AgentGit history', () => {
   assert.equal(audit.checked.events, 1);
 });
 
+test('CLI exports, backs up, imports, and reports schema status', () => {
+  const source = tempRepo();
+  cli(['init', source]);
+  const event = JSON.parse(cli(['emit', '--repo', source, '--agent', 'planner', '--type', 'note.recorded', '--payload', '{"text":"portable"}']));
+  const directory = tempRepo();
+  const exportedFile = path.join(directory, 'export.json');
+  const backupFile = path.join(directory, 'backup.json');
+  assert.equal(JSON.parse(cli(['export', '--repo', source, '--file', exportedFile])).events, 1);
+  assert.equal(JSON.parse(cli(['backup', '--repo', source, '--file', backupFile])).events, 1);
+  assert.equal(JSON.parse(cli(['schema-status', '--repo', source])).needsMigration, false);
+
+  const target = tempRepo();
+  const imported = JSON.parse(cli(['import', '--repo', target, '--file', exportedFile]));
+  assert.equal(imported.importedEvents, 1);
+  assert.equal(JSON.parse(cli(['show', '--repo', target, event.id])).contentHash, event.contentHash);
+});
+
 test('CLI recognizes terminal --commit and --once flags', () => {
   const repo = tempRepo();
   git(repo, ['init', '-b', 'main']);

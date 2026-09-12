@@ -28,6 +28,7 @@ ref reconciliation.
 | `src/store.mjs` | Immutable event writes, mutable projections, queries, migrations, and integrity audits |
 | `src/objects.mjs` | Content-addressed storage for large text, binary values, and Git diffs |
 | `src/payload.mjs` | Credential redaction, runtime-value normalization, and large-payload externalization |
+| `src/bundle.mjs` | Versioned, integrity-checked full-history export and restore |
 | `src/git.mjs` | Read Git state and create optional commits and checkpoint events |
 | `src/adapters/codex.mjs` | Normalize observable Codex rollout records |
 | `src/watcher.mjs` | Resume Codex JSONL ingestion from persisted byte cursors |
@@ -125,3 +126,17 @@ the collaborating agents still own those decisions.
 - A process crash is contained by SQLite transactions and WAL recovery.
 - Projection drift is recoverable only where a replay operation is explicitly
   provided. See [operations.md](operations.md).
+
+## Portable event bundles
+
+The `agentgit.event-bundle` format is a JSON snapshot with its own format
+version and canonical SHA-256 hash. It contains ordered immutable events, refs,
+deliveries, source mappings, ingest cursors, and base64-encoded content-addressed
+objects. Import verifies the bundle hash, every event hash and DAG edge, delivery
+chronology, cursor consistency, and every object before restoring database
+state.
+
+Bundles are backup and portability artifacts, not a synchronization protocol.
+Import accepts an empty event store or an idempotent re-import of the exact same
+history. It rejects partial or unrelated destination histories instead of
+inventing merge semantics.

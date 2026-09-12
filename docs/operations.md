@@ -39,34 +39,53 @@ objects, and task projection state. It never repairs data automatically.
 
 ## Backup
 
-The current release does not provide an online backup command. For a consistent
-manual backup:
+Create a portable, internally verified backup while the store is online:
 
-1. Stop the watcher, MCP server, Harness plugin, dashboard, and any CLI writers
-   for the target project.
-2. Run `agentgit verify --repo <project> --all`.
-3. Copy the entire `.agentgit/` directory, including `events.db` and
-   `objects/`, to the backup location.
-4. Keep the target project's Git commit or bundle with the backup when Git
-   checkpoint restoration matters.
+```sh
+agentgit backup --repo /absolute/path/to/project \
+  --file /secure/path/project-agentgit.json
+```
 
-Copying only `events.db` while writers are active can omit WAL changes. Copying
-only the database also loses externalized payloads and checkpoint diffs.
+The command first audits the source, takes a transactionally consistent read,
+includes every referenced object, and writes through a temporary file. It will
+not overwrite an existing destination unless `--overwrite` is supplied. Keep
+the target project's Git repository or a Git bundle alongside this backup when
+source restoration matters; AgentGit checkpoints record Git evidence but the
+event bundle is not a replacement for the Git object database.
+
+The event bundle contains source file paths and potentially sensitive observed
+content. Store it with permissions appropriate for `.agentgit/` itself.
 
 ## Restore
 
-Restore into an unused target project path or while every AgentGit process for
-the target is stopped:
+Restore into a target with no AgentGit events:
 
-1. Preserve the existing `.agentgit/` directory until the restore is verified.
-2. Place the complete backed-up `.agentgit/` directory in the target project.
-3. Run `agentgit init <project>` to apply forward-compatible migrations.
-4. Run `agentgit verify --repo <project> --all`.
-5. Start integrations only after the audit succeeds.
+```sh
+agentgit import --repo /absolute/path/to/restored-project \
+  --file /secure/path/project-agentgit.json
+agentgit verify --repo /absolute/path/to/restored-project --all
+```
+
+Import is idempotent for the exact same history. A normal re-import preserves
+the destination's current refs, deliveries, and ingest cursors. Add
+`--replace-mutable` to restore those projections exactly from the backup. This
+flag cannot replace immutable events, and import refuses a destination with a
+different or partial history.
 
 AgentGit supports forward schema upgrades, not schema downgrades. A database
 whose recorded schema is newer than the installed AgentGit version is rejected
 without being migrated.
+
+Inspect the current and supported versions before an upgrade:
+
+```sh
+agentgit schema-status --repo /absolute/path/to/project
+```
+
+This command is read-only and reports pending migration names without opening
+the normal auto-migrating `EventStore`. Take a backup with the currently
+installed compatible AgentGit release before upgrading its package. `init` and
+all normal store entry points apply pending forward migrations transactionally.
 
 ## Projection recovery
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { initRepository, EventStore } from './store.mjs';
+import { initRepository, EventStore, schemaStatus } from './store.mjs';
 import fs from 'node:fs';
 import { normalizeCodexRecord } from './adapters/codex.mjs';
 import { createCheckpoint } from './git.mjs';
 import { scanCodexRollouts, watchCodexRollouts } from './watcher.mjs';
 import { codexMcpConfig } from './codex-config.mjs';
 import { startDashboard } from './dashboard-server.mjs';
+import { exportEventBundle, importEventBundle } from './bundle.mjs';
 
 function usage() {
   console.error(`Usage:
@@ -14,6 +15,10 @@ function usage() {
   agentgit log --repo <repo> [--ref <name>] [--task <id>] [--agent <id>] [--type <type>]
   agentgit show --repo <repo> <event-id>
   agentgit import-codex --repo <repo> --file <rollout.jsonl> --agent <id> [--task <id>] [--session <id>] [--ref <name>]
+  agentgit export --repo <repo> --file <bundle.json> [--overwrite]
+  agentgit backup --repo <repo> --file <bundle.json> [--overwrite]
+  agentgit import --repo <repo> --file <bundle.json> [--replace-mutable]
+  agentgit schema-status --repo <repo>
   agentgit send --repo <repo> --from <id> --to <id[,id...]> --text <message> [--subject <text>] [--causation <event-id>]
   agentgit inbox --repo <repo> --agent <id> [--status pending|delivered|acknowledged] [--peek]
   agentgit ack --repo <repo> --agent <id> --event <event-id>
@@ -103,6 +108,21 @@ try {
     try {
       print(store.importJsonl({ filePath: options.file, agentId: options.agent, taskId: options.task, sessionId: options.session, ref: options.ref, adapter: normalizeCodexRecord }));
     } finally { store.close(); }
+  } else if (command === 'export' || command === 'backup') {
+    if (!options.repo || !options.file) usage();
+    const store = new EventStore(options.repo);
+    try { print(exportEventBundle({ store, filePath: options.file, overwrite: options.overwrite === true })); }
+    finally { store.close(); }
+  } else if (command === 'import') {
+    if (!options.repo || !options.file) usage();
+    const store = new EventStore(options.repo);
+    try { print(importEventBundle({ store, filePath: options.file, replaceMutable: options.replace_mutable === true })); }
+    finally { store.close(); }
+  } else if (command === 'schema-status') {
+    if (!options.repo) usage();
+    const status = schemaStatus(options.repo);
+    print(status);
+    if (!status.compatible) process.exitCode = 1;
   } else if (command === 'send') {
     if (!options.repo || !options.from || !options.to || !options.text) usage();
     const store = new EventStore(options.repo);

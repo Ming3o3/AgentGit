@@ -124,3 +124,22 @@ agentgit serve --repo "$PROJECT" --port 3210
 Open `http://127.0.0.1:3210`. The reviewer can inspect tasks, recent activity,
 and ref heads without changing task, message, event, or Git state. Note that
 `--peek` is required for a non-mutating CLI inbox read.
+
+## 5. Close the recovery loop
+
+```sh
+agentgit backup --repo "$PROJECT" --file /secure/path/login-history.json
+agentgit schema-status --repo "$PROJECT"
+```
+
+Test the backup in a disposable empty project before relying on it:
+
+```sh
+RESTORE_PROJECT=/absolute/path/to/empty-restore-project
+agentgit import --repo "$RESTORE_PROJECT" --file /secure/path/login-history.json
+agentgit verify --repo "$RESTORE_PROJECT" --all
+agentgit log --repo "$RESTORE_PROJECT" --task "$TASK"
+```
+
+The restored event IDs and hashes match the source. Git source and commits must
+be restored separately from the Git repository or its own backup.

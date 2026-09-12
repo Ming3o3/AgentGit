@@ -260,6 +260,35 @@ node src/cli.mjs rebuild-tasks --repo /absolute/path/to/project
 Configured agents can perform the same scoped recovery with the
 `rebuild_task_projection` MCP tool.
 
+## Portable backup and restore
+
+Export the complete local history, mutable delivery/ref state, ingest cursors,
+and referenced objects as one versioned, hash-verified JSON bundle:
+
+```sh
+node src/cli.mjs backup --repo /absolute/path/to/project \
+  --file /absolute/path/to/agentgit-backup.json
+```
+
+Restore it into a project with an empty AgentGit history:
+
+```sh
+node src/cli.mjs import --repo /absolute/path/to/restored-project \
+  --file /absolute/path/to/agentgit-backup.json
+node src/cli.mjs verify --repo /absolute/path/to/restored-project --all
+```
+
+`export` is an alias with the same portable format. Re-importing the same
+history is idempotent and preserves current mutable state by default. Use
+`--replace-mutable` only when refs, deliveries, and ingest cursors must be reset
+to the bundle snapshot. AgentGit refuses to combine unrelated histories.
+
+Inspect database compatibility without initializing or migrating a repository:
+
+```sh
+node src/cli.mjs schema-status --repo /absolute/path/to/project
+```
+
 ## Local Dashboard
 
 AgentGit includes a local, read-only operational dashboard for task state,
@@ -313,7 +342,5 @@ npm pack --dry-run
   merge source-code conflicts or competing task decisions for agents.
 - Task state is rebuildable from immutable events. Arbitrary historical
   projections and worktree restoration are not yet exposed as commands.
-- Codex and DeepSeek Harness session events can be imported, but there is not
-  yet a portable full-store export format.
 - The dashboard reports operational counts and recent activity, not latency,
   throughput, resource usage, or external notifications.
