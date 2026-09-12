@@ -33,6 +33,7 @@ test('registers Harness tools and imports session events idempotently', async ()
     'agentgit_create_task',
     'agentgit_update_task',
     'agentgit_task_history',
+    'agentgit_state_at',
     'agentgit_list_tasks',
     'agentgit_create_checkpoint',
     'agentgit_verify_history',
@@ -124,6 +125,18 @@ test('Harness tool execution writes AgentGit task events', async () => {
   const store = new EventStore(repo);
   assert.equal(store.list({ type: 'task.created', limit: 10 }).length, 1);
   store.close();
+  for (const dispose of effects) dispose?.();
+});
+
+test('Harness reads historical task state without changing the projection', async () => {
+  const { tools, effects } = fixture();
+  const createTask = tools.find((tool) => tool.name === 'agentgit_create_task');
+  const updateTask = tools.find((tool) => tool.name === 'agentgit_update_task');
+  const stateAt = tools.find((tool) => tool.name === 'agentgit_state_at');
+  const created = JSON.parse(await createTask.execute({ title: 'Historical Harness task' }));
+  await updateTask.execute({ taskId: created.task.id, assigneeId: 'coder' });
+  const historical = JSON.parse(await stateAt.execute({ eventId: created.event.id, taskId: created.task.id }));
+  assert.equal(historical.task.status, 'open');
   for (const dispose of effects) dispose?.();
 });
 

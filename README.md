@@ -79,7 +79,7 @@ The MCP tools are:
 
 - `read_inbox` and `acknowledge_message`
 - `send_message`
-- `get_event` and `task_history`
+- `get_event`, `state_at`, and `task_history`
 - `create_task`, `assign_task`, `update_task_status`, and `list_tasks`
 - `create_checkpoint`
 - `verify_history` and `rebuild_task_projection`
@@ -118,7 +118,7 @@ For local source development, add a patch overlay to a Harness profile:
 For a bundle install, use the package's `cordis.patch.yml` and override the
 same `repo` and `agentId` fields in the profile patch. The plugin exposes
 `agentgit_read_inbox`, `agentgit_send_message`, `agentgit_acknowledge_message`,
-`agentgit_create_task`, `agentgit_update_task`, `agentgit_task_history`,
+`agentgit_create_task`, `agentgit_update_task`, `agentgit_task_history`, `agentgit_state_at`,
 `agentgit_list_tasks`, `agentgit_create_checkpoint`, `agentgit_verify_history`,
 and `agentgit_rebuild_task_projection`.
 Harness session events are imported idempotently by `(sessionId, event.seq)`;
@@ -260,6 +260,24 @@ node src/cli.mjs rebuild-tasks --repo /absolute/path/to/project
 Configured agents can perform the same scoped recovery with the
 `rebuild_task_projection` MCP tool.
 
+## Historical state
+
+Replay event-derived state through a local sequence or event ID without
+changing the current projections:
+
+```sh
+node src/cli.mjs state --repo /absolute/path/to/project --at 42
+node src/cli.mjs state --repo /absolute/path/to/project \
+  --at evt_... --task task_...
+```
+
+The result includes the resolved boundary, event and Agent counts, event types,
+task status counts, and either all historical tasks or one requested task. MCP
+and Harness expose the same operation as `state_at` and `agentgit_state_at`.
+The replay uses AgentGit's deterministic local sequence. It does not alter Git,
+restore a worktree, or reconstruct mutable delivery/ref state that was not
+recorded as immutable events.
+
 ## Portable backup and restore
 
 Export the complete local history, mutable delivery/ref state, ingest cursors,
@@ -340,7 +358,7 @@ npm pack --dry-run
   synchronize histories between machines.
 - SQLite transactions serialize appends to the same ref, but AgentGit does not
   merge source-code conflicts or competing task decisions for agents.
-- Task state is rebuildable from immutable events. Arbitrary historical
-  projections and worktree restoration are not yet exposed as commands.
+- Task state and event-derived counts can be queried at any recorded local
+  sequence. Worktree restoration is intentionally not automatic.
 - The dashboard reports operational counts and recent activity, not latency,
   throughput, resource usage, or external notifications.

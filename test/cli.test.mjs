@@ -35,6 +35,16 @@ test('CLI creates, assigns, and advances a task', () => {
   assert.equal(JSON.parse(cli(['rebuild-tasks', '--repo', repo])).events, 3);
 });
 
+test('CLI reads task state at an earlier event without changing current state', () => {
+  const repo = tempRepo();
+  cli(['init', repo]);
+  const created = JSON.parse(cli(['task-create', '--repo', repo, '--agent', 'planner', '--title', 'Historical CLI']));
+  cli(['task-assign', '--repo', repo, '--agent', 'planner', '--task', created.task.id, '--to', 'coder']);
+  const historical = JSON.parse(cli(['state', '--repo', repo, '--at', created.event.id, '--task', created.task.id]));
+  assert.equal(historical.task.status, 'open');
+  assert.equal(JSON.parse(cli(['tasks', '--repo', repo]))[0].status, 'assigned');
+});
+
 test('CLI receives messages and supports non-mutating inbox inspection', () => {
   const repo = tempRepo();
   cli(['init', repo]);

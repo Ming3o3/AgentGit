@@ -29,7 +29,8 @@ The result contains both the immutable creation event and current task:
 }
 ```
 
-Use the returned task ID in later commands:
+Use the returned task ID in later commands, and save the creation event ID as
+`CREATE_EVENT` for the historical-state check:
 
 ```sh
 TASK=task_example
@@ -90,6 +91,16 @@ agentgit log --repo "$PROJECT" --task "$TASK"
 agentgit show --repo "$PROJECT" "$CHECKPOINT"
 agentgit verify --repo "$PROJECT" --all
 ```
+
+Compare the task at its creation event with the current completed projection:
+
+```sh
+agentgit state --repo "$PROJECT" --at "$CREATE_EVENT" --task "$TASK"
+agentgit tasks --repo "$PROJECT" --status completed
+```
+
+The first command reports the historical task as `open`; it does not roll back
+the current task or touch the Git worktree.
 
 The task log is ordered by AgentGit's local monotonic sequence, even if events
 share a timestamp. A successful full audit has this general shape:

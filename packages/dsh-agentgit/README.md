@@ -52,7 +52,7 @@ dsh plugin --profile agentgit-dev add /absolute/path/to/dsh-agentgit
 插件向 Harness 注册以下工具：
 
 - `agentgit_read_inbox`、`agentgit_send_message`、`agentgit_acknowledge_message`
-- `agentgit_create_task`、`agentgit_update_task`、`agentgit_task_history`、`agentgit_list_tasks`
+- `agentgit_create_task`、`agentgit_update_task`、`agentgit_task_history`、`agentgit_state_at`、`agentgit_list_tasks`
 - `agentgit_create_checkpoint`、`agentgit_verify_history`、`agentgit_rebuild_task_projection`
 
 ## Web UI 历史面板
@@ -66,3 +66,6 @@ dsh plugin --profile agentgit-dev add /absolute/path/to/dsh-agentgit
 AgentGit 工具或 CLI 完成；投影异常时可直接调用
 `agentgit_rebuild_task_projection` 从不可变任务事件恢复当前任务状态。若 profile 没有启动 WebServer，Host 插件仍可作为
 纯工具/事件采集插件使用，Web route 会在 WebServer 可用时自动注册。
+
+`agentgit_state_at` 可以按事件 ID 或本地序列只读重放当时的任务状态和事件统计，
+不会修改当前任务投影，也不会切换 Git 工作区。

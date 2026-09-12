@@ -14,6 +14,7 @@ function usage() {
   agentgit emit --repo <repo> --agent <id> --type <type> --payload <json> [--ref <name>]
   agentgit log --repo <repo> [--ref <name>] [--task <id>] [--agent <id>] [--type <type>]
   agentgit show --repo <repo> <event-id>
+  agentgit state --repo <repo> --at <event-id|sequence> [--task <id>]
   agentgit import-codex --repo <repo> --file <rollout.jsonl> --agent <id> [--task <id>] [--session <id>] [--ref <name>]
   agentgit export --repo <repo> --file <bundle.json> [--overwrite]
   agentgit backup --repo <repo> --file <bundle.json> [--overwrite]
@@ -93,6 +94,14 @@ try {
     const store = new EventStore(options.repo);
     try { print(store.get(options._[0])); }
     finally { store.close(); }
+  } else if (command === 'state') {
+    if (!options.repo || !options.at || options.at === true) usage();
+    const store = new EventStore(options.repo);
+    try {
+      const at = String(options.at);
+      const selector = /^[1-9][0-9]*$/u.test(at) ? { sequence: Number(at) } : { eventId: at };
+      print(store.stateAt({ ...selector, taskId: options.task ?? null }));
+    } finally { store.close(); }
   } else if (command === 'verify') {
     if (!options.repo || (!options._[0] && options.all !== true)) usage();
     const store = new EventStore(options.repo);

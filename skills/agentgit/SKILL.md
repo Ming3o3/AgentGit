@@ -11,4 +11,6 @@ Use `send_message` for work that another agent needs to act on. Keep messages co
 
 Use `create_checkpoint` after a meaningful work stage. Set `commit` only when the changes are reviewed enough to become a normal Git commit. Before reporting a task complete, use `task_history` and make sure the final result and checkpoint are recorded.
 
+Use `state_at` when a task needs the event-derived task state and counts that existed at a specific event or local sequence. Treat it as a read-only historical query; it does not restore Git or historical message-delivery state.
+
 Do not try to infer other agents' hidden reasoning. Use the observable event history, messages, tool outcomes, and Git checkpoint references.

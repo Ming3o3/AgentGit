@@ -104,6 +104,11 @@ Task lifecycle:
 `completed` and `cancelled` are terminal. Assignment and status changes that
 would violate the lifecycle fail in the same transaction as the event append.
 
+`state --at` runs the same task reducer against an immutable prefix of the
+event sequence and calculates event-derived counts from that prefix. It never
+writes the current projection. Delivery and ref history are excluded because
+those mutable transitions do not yet have a complete immutable event stream.
+
 ## Ordering and concurrent writers
 
 Timestamps are descriptive and may collide. `event_order.sequence` is the

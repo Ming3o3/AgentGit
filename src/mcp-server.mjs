@@ -74,6 +74,17 @@ server.registerTool('get_event', {
   return result(event);
 });
 
+server.registerTool('state_at', {
+  title: 'Read historical AgentGit state',
+  description: 'Replay event-derived task state and counts through one event or local sequence without changing current state.',
+  inputSchema: {
+    event_id: z.string().min(1).nullable().optional().describe('Boundary event ID; mutually exclusive with sequence'),
+    sequence: z.number().int().min(1).nullable().optional().describe('Boundary local sequence; mutually exclusive with event_id'),
+    task_id: z.string().min(1).nullable().optional().describe('Return only this historical task projection'),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ event_id: eventId = null, sequence = null, task_id: taskId = null }) => result(store.stateAt({ eventId, sequence, taskId })));
+
 server.registerTool('verify_history', {
   title: 'Verify AgentGit history',
   description: 'Read-only audit of the local event DAG, hashes, refs, deliveries, objects, and task projection.',

@@ -1143,6 +1143,56 @@ var EventStore = class {
       ORDER BY event_order.sequence DESC LIMIT ?
     `).all(limit).map((item) => this.#hydrate(item));
   }
+  stateAt({ eventId = null, sequence = null, taskId = null } = {}) {
+    const hasEvent = typeof eventId === "string" && eventId.length > 0;
+    const hasSequence = sequence !== null && sequence !== void 0;
+    if (hasEvent === hasSequence) throw new Error("stateAt requires exactly one of eventId or sequence");
+    if (hasSequence && (!Number.isSafeInteger(sequence) || sequence < 1)) {
+      throw new Error("sequence must be a positive integer");
+    }
+    if (taskId !== null && (typeof taskId !== "string" || !taskId.trim())) {
+      throw new Error("taskId must be a non-empty string or null");
+    }
+    const boundary = hasEvent ? this.database.prepare(`
+        SELECT events.id, events.created_at, event_order.sequence
+        FROM events JOIN event_order ON event_order.event_id = events.id
+        WHERE events.id = ?
+      `).get(eventId) : this.database.prepare(`
+        SELECT events.id, events.created_at, event_order.sequence
+        FROM events JOIN event_order ON event_order.event_id = events.id
+        WHERE event_order.sequence = ?
+      `).get(sequence);
+    if (!boundary) throw new Error(hasEvent ? `event does not exist: ${eventId}` : `event sequence does not exist: ${sequence}`);
+    const events = this.database.prepare(`
+      SELECT events.* FROM events JOIN event_order ON event_order.event_id = events.id
+      WHERE event_order.sequence <= ? ORDER BY event_order.sequence ASC
+    `).all(boundary.sequence).map((row) => this.#hydrate(row));
+    const replayIssues = [];
+    const taskMap = expectedTaskProjection(events, (issue) => replayIssues.push(issue));
+    if (replayIssues.length > 0) {
+      throw new Error(`cannot replay invalid task history: ${replayIssues[0].kind}`);
+    }
+    const tasks = [...taskMap.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+    const eventTypes = {};
+    const agents = /* @__PURE__ */ new Set();
+    for (const event of events) {
+      eventTypes[event.type] = (eventTypes[event.type] ?? 0) + 1;
+      agents.add(event.agentId);
+    }
+    const taskStatuses = {};
+    for (const task of tasks) taskStatuses[task.status] = (taskStatuses[task.status] ?? 0) + 1;
+    const result = {
+      asOf: { eventId: boundary.id, sequence: boundary.sequence, createdAt: boundary.created_at },
+      summary: {
+        events: events.length,
+        agents: agents.size,
+        eventTypes: Object.fromEntries(Object.entries(eventTypes).sort(([left], [right]) => left.localeCompare(right))),
+        tasks: Object.fromEntries(Object.entries(taskStatuses).sort(([left], [right]) => left.localeCompare(right)))
+      }
+    };
+    if (taskId !== null) return { ...result, task: taskMap.get(taskId) ?? null };
+    return { ...result, tasks };
+  }
   dashboardSummary() {
     const tasks = Object.fromEntries(this.database.prepare(`
       SELECT status, COUNT(*) AS count FROM tasks GROUP BY status
@@ -1768,6 +1818,22 @@ function registerTools(ctx, store, config) {
     },
     async execute(args) {
       return store.list({ taskId: args.taskId, limit: args.limit ?? 100 });
+    }
+  });
+  objectTool(ctx, {
+    name: "agentgit_state_at",
+    description: "Replay event-derived task state and counts through one event or local sequence.",
+    parameters: {
+      eventId: stringParameter(false, "Boundary event ID; mutually exclusive with sequence."),
+      sequence: { type: "integer", description: "Boundary local sequence; mutually exclusive with eventId." },
+      taskId: stringParameter(false, "Return only this historical task projection.")
+    },
+    async execute(args) {
+      return store.stateAt({
+        eventId: args?.eventId ?? null,
+        sequence: args?.sequence ?? null,
+        taskId: args?.taskId ?? null
+      });
     }
   });
   arrayTool(ctx, {

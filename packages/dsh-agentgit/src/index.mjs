@@ -211,6 +211,23 @@ function registerTools(ctx, store, config) {
     },
   });
 
+  objectTool(ctx, {
+    name: 'agentgit_state_at',
+    description: 'Replay event-derived task state and counts through one event or local sequence.',
+    parameters: {
+      eventId: stringParameter(false, 'Boundary event ID; mutually exclusive with sequence.'),
+      sequence: { type: 'integer', description: 'Boundary local sequence; mutually exclusive with eventId.' },
+      taskId: stringParameter(false, 'Return only this historical task projection.'),
+    },
+    async execute(args) {
+      return store.stateAt({
+        eventId: args?.eventId ?? null,
+        sequence: args?.sequence ?? null,
+        taskId: args?.taskId ?? null,
+      });
+    },
+  });
+
   arrayTool(ctx, {
     name: 'agentgit_list_tasks',
     description: 'List task state reconstructed from immutable task events.',

@@ -53,6 +53,7 @@ Unless stated otherwise, `--repo` is required and limits default to 100.
 | `emit` | `--repo`, `--agent`, `--type`, `--payload <object-json>` | `--task`, `--session`, `--causation`, `--ref` | Append and return a custom event |
 | `log` | `--repo` | `--ref`, `--task`, `--agent`, `--type`, `--limit` | Return matching events in local sequence order |
 | `show` | `--repo`, positional event ID | none | Return one event or `null` |
+| `state` | `--repo`, `--at <event-id\|sequence>` | `--task` | Replay event-derived task state and counts through the boundary |
 | `verify` | `--repo`, event ID or `--all` | none | Verify one event hash or audit the entire store |
 | `import-codex` | `--repo`, `--file`, `--agent` | `--task`, `--session`, `--ref` | Import complete Codex JSONL records from a resumable cursor |
 | `export` | `--repo`, `--file` | `--overwrite` | Write a versioned, verified full-store event bundle |
@@ -88,6 +89,7 @@ formatted JSON. Protocol/schema errors and store errors are MCP tool errors.
 | `read_inbox` | optional nullable `status`; optional `limit` 1-500 | Message events; returned pending rows become delivered |
 | `acknowledge_message` | `event_id` | Delivery; repeated calls remain acknowledged |
 | `get_event` | `event_id` | Event; missing IDs return an MCP error result |
+| `state_at` | exactly one of `event_id`, `sequence`; optional nullable `task_id` | Historical boundary, event/task counts, and task projection(s); read-only |
 | `task_history` | `task_id`; optional `limit` 1-1000 | Chronological task events |
 | `create_task` | `title`; optional `description`, `priority` | `{ event, task }` |
 | `assign_task` | `task_id`, `assignee_id`; optional nullable `note` | `{ event, task }` |
@@ -104,6 +106,34 @@ messaging, task, checkpoint, audit, and projection-rebuild operations. Its
 parameter names are camelCase: for example `taskId`, `assigneeId`, and
 `causationEventId`. `agentgit_update_task` can atomically apply `assigneeId`
 and/or `status`; at least one is required. Harness query limits are 1-10000.
+`agentgit_state_at` accepts exactly one of `eventId` and `sequence`, plus an
+optional `taskId`.
+
+### Historical state response
+
+`state`, `state_at`, and `agentgit_state_at` return:
+
+```json
+{
+  "asOf": {
+    "eventId": "evt_...",
+    "sequence": 42,
+    "createdAt": "2026-09-12T08:30:00.000Z"
+  },
+  "summary": {
+    "events": 42,
+    "agents": 3,
+    "eventTypes": { "task.created": 2 },
+    "tasks": { "completed": 1, "in_progress": 1 }
+  },
+  "tasks": []
+}
+```
+
+When a task filter is supplied, `task` replaces `tasks` and is `null` if that
+task did not exist at the boundary. The snapshot replays immutable task events
+in local sequence order. Delivery status and refs are excluded because their
+historical transitions are not currently immutable events.
 
 Plugin configuration:
 
