@@ -228,6 +228,34 @@ function registerTools(ctx, store, config) {
     },
   });
 
+  objectTool(ctx, {
+    name: 'agentgit_get_metrics',
+    description: 'Read event throughput, workflow latency, backlog age, ingest freshness, and local storage usage.',
+    parameters: {
+      windowMinutes: limitParameter('Metric window in minutes, from 1 through 10080.'),
+    },
+    async execute(args) {
+      return store.metrics({ windowMinutes: args?.windowMinutes ?? 60 });
+    },
+  });
+
+  objectTool(ctx, {
+    name: 'agentgit_health_check',
+    description: 'Return local integrity, capture failure, blocked task, and stale pending-message alerts.',
+    parameters: {
+      windowMinutes: limitParameter('Alert window in minutes, from 1 through 10080.'),
+      pendingAgeMinutes: { type: 'integer', description: 'Pending message age threshold in minutes, from 0 through 10080.' },
+      verify: { type: 'boolean', description: 'Run the complete history integrity audit; defaults to true.' },
+    },
+    async execute(args) {
+      return store.health({
+        windowMinutes: args?.windowMinutes ?? 60,
+        pendingAgeMinutes: args?.pendingAgeMinutes ?? 15,
+        verify: args?.verify ?? true,
+      });
+    },
+  });
+
   arrayTool(ctx, {
     name: 'agentgit_list_tasks',
     description: 'List task state reconstructed from immutable task events.',

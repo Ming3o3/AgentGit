@@ -8,8 +8,8 @@ import { codexMcpConfig } from './codex-config.mjs';
 import { startDashboard } from './dashboard-server.mjs';
 import { exportEventBundle, importEventBundle } from './bundle.mjs';
 
-function usage() {
-  console.error(`Usage:
+function usage(exitCode = 1) {
+  const message = `Usage:
   agentgit init [repo]
   agentgit emit --repo <repo> --agent <id> --type <type> --payload <json> [--ref <name>]
   agentgit log --repo <repo> [--ref <name>] [--task <id>] [--agent <id>] [--type <type>]
@@ -31,10 +31,18 @@ function usage() {
   agentgit task-status --repo <repo> --agent <id> --task <id> --status <status> [--summary <text>]
   agentgit tasks --repo <repo> [--agent <id>] [--status <status>]
   agentgit rebuild-tasks --repo <repo>
+  agentgit metrics --repo <repo> [--window <minutes>]
+  agentgit health --repo <repo> [--window <minutes>] [--pending-age <minutes>] [--no-verify]
   agentgit serve --repo <repo> [--host <host>] [--port <port>]
   agentgit verify --repo <repo> <event-id>
-  agentgit verify --repo <repo> --all`);
-  process.exit(1);
+  agentgit verify --repo <repo> --all
+
+Options:
+  --compact  Print JSON on one line
+  --help     Show this help`;
+  if (exitCode === 0) console.log(message);
+  else console.error(message);
+  process.exit(exitCode);
 }
 
 function args(argv) {
@@ -49,7 +57,7 @@ function args(argv) {
 }
 
 function print(value) {
-  console.log(JSON.stringify(value, null, 2));
+  console.log(JSON.stringify(value, null, options.compact === true ? 0 : 2));
 }
 
 function integerOption(options, name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -66,6 +74,8 @@ function integerOption(options, name, fallback, { min = 1, max = Number.MAX_SAFE
 
 const command = process.argv[2];
 const options = args(process.argv.slice(3));
+
+if (!command || command === 'help' || command === '--help' || command === '-h' || options.help === true) usage(0);
 
 try {
   if (command === 'init') {
@@ -207,6 +217,24 @@ try {
     const store = new EventStore(options.repo);
     try { print({ events: store.rebuildTaskProjection() }); }
     finally { store.close(); }
+  } else if (command === 'metrics') {
+    if (!options.repo) usage();
+    const store = new EventStore(options.repo);
+    try { print(store.metrics({ windowMinutes: integerOption(options, 'window', 60, { max: 10080 }) })); }
+    finally { store.close(); }
+  } else if (command === 'health') {
+    if (!options.repo) usage();
+    const store = new EventStore(options.repo);
+    try {
+      const report = store.health({
+        windowMinutes: integerOption(options, 'window', 60, { max: 10080 }),
+        pendingAgeMinutes: integerOption(options, 'pending_age', 15, { min: 0, max: 10080 }),
+        verify: options.no_verify !== true,
+      });
+      print(report);
+      if (report.status === 'degraded') process.exitCode = 1;
+      if (report.status === 'unhealthy') process.exitCode = 2;
+    } finally { store.close(); }
   } else if (command === 'serve') {
     if (!options.repo) usage();
     const controller = new AbortController();

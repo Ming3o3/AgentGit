@@ -353,6 +353,38 @@ function validIsoTimestamp(value) {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
+function percentile(values, percentage) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.max(0, Math.ceil(sorted.length * percentage) - 1)];
+}
+function durationSummary(values) {
+  if (values.length === 0) return { samples: 0, averageMs: null, p95Ms: null, maximumMs: null };
+  return {
+    samples: values.length,
+    averageMs: Math.round(values.reduce((total, value) => total + value, 0) / values.length),
+    p95Ms: percentile(values, 0.95),
+    maximumMs: values.reduce((maximum, value) => Math.max(maximum, value), 0)
+  };
+}
+function directoryStats(directory) {
+  if (!fs2.existsSync(directory)) return { files: 0, bytes: 0 };
+  let files = 0;
+  let bytes = 0;
+  const pending = [directory];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs2.readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path2.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(entryPath);
+      else if (entry.isFile()) {
+        files += 1;
+        bytes += fs2.statSync(entryPath).size;
+      }
+    }
+  }
+  return { files, bytes };
+}
 function expectedTaskProjection(events, addAuditIssue) {
   const tasks = /* @__PURE__ */ new Map();
   for (const event of events) {
@@ -1193,6 +1225,146 @@ var EventStore = class {
     if (taskId !== null) return { ...result, task: taskMap.get(taskId) ?? null };
     return { ...result, tasks };
   }
+  metrics({ windowMinutes = 60, measuredAt = now() } = {}) {
+    if (!Number.isSafeInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 10080) {
+      throw new Error("windowMinutes must be an integer between 1 and 10080");
+    }
+    if (!validIsoTimestamp(measuredAt)) throw new Error("measuredAt must be an ISO timestamp");
+    const measuredTime = Date.parse(measuredAt);
+    const cutoff = new Date(measuredTime - windowMinutes * 6e4).toISOString();
+    const eventRows = this.database.prepare(`
+      SELECT type, COUNT(*) AS count FROM events WHERE created_at >= ? AND created_at <= ?
+      GROUP BY type ORDER BY type
+    `).all(cutoff, measuredAt);
+    const eventsInWindow = eventRows.reduce((total, row) => total + row.count, 0);
+    const totalEvents = this.database.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+    const deliveryRows = this.database.prepare(`
+      SELECT status, created_at, delivered_at, acknowledged_at FROM deliveries
+    `).all();
+    const messageEvents = this.database.prepare("SELECT COUNT(*) AS count FROM events WHERE type = 'message.sent'").get().count;
+    const deliveryCounts = {};
+    const deliveryLatencies = [];
+    const acknowledgementLatencies = [];
+    let oldestPendingAgeMs = null;
+    for (const delivery of deliveryRows) {
+      deliveryCounts[delivery.status] = (deliveryCounts[delivery.status] ?? 0) + 1;
+      const createdTime = Date.parse(delivery.created_at);
+      if (delivery.status === "pending" && Number.isFinite(createdTime)) {
+        oldestPendingAgeMs = Math.max(oldestPendingAgeMs ?? 0, Math.max(0, measuredTime - createdTime));
+      }
+      if (Number.isFinite(createdTime) && validIsoTimestamp(delivery.delivered_at)) {
+        deliveryLatencies.push(Math.max(0, Date.parse(delivery.delivered_at) - createdTime));
+      }
+      if (Number.isFinite(createdTime) && validIsoTimestamp(delivery.acknowledged_at)) {
+        acknowledgementLatencies.push(Math.max(0, Date.parse(delivery.acknowledged_at) - createdTime));
+      }
+    }
+    const taskRows = this.database.prepare("SELECT status, created_at, completed_at FROM tasks").all();
+    const taskCounts = {};
+    const completionDurations = [];
+    for (const task of taskRows) {
+      taskCounts[task.status] = (taskCounts[task.status] ?? 0) + 1;
+      if (validIsoTimestamp(task.created_at) && validIsoTimestamp(task.completed_at)) {
+        completionDurations.push(Math.max(0, Date.parse(task.completed_at) - Date.parse(task.created_at)));
+      }
+    }
+    const cursorRows = this.database.prepare("SELECT updated_at FROM ingest_cursors").all();
+    const cursorTimes = cursorRows.map((row) => Date.parse(row.updated_at)).filter(Number.isFinite);
+    const lastCursorUpdate = cursorTimes.length > 0 ? new Date(cursorTimes.reduce((latest, value) => Math.max(latest, value), 0)).toISOString() : null;
+    const databasePath = repoDbPath(this.repo);
+    const objectStats = directoryStats(path2.join(this.repo, ".agentgit", "objects"));
+    const size = (file) => {
+      try {
+        return fs2.statSync(file).size;
+      } catch (error) {
+        if (error.code === "ENOENT") return 0;
+        throw error;
+      }
+    };
+    return {
+      measuredAt,
+      windowMinutes,
+      events: {
+        total: totalEvents,
+        inWindow: eventsInWindow,
+        perMinute: Number((eventsInWindow / windowMinutes).toFixed(3)),
+        byType: Object.fromEntries(eventRows.map((row) => [row.type, row.count]))
+      },
+      messages: {
+        events: messageEvents,
+        deliveries: deliveryRows.length,
+        byStatus: deliveryCounts,
+        oldestPendingAgeMs,
+        deliveryLatency: durationSummary(deliveryLatencies),
+        acknowledgementLatency: durationSummary(acknowledgementLatencies)
+      },
+      tasks: {
+        total: taskRows.length,
+        byStatus: taskCounts,
+        completionDuration: durationSummary(completionDurations)
+      },
+      ingest: {
+        sources: cursorRows.length,
+        lastCursorUpdate,
+        lastCursorUpdateAgeMs: lastCursorUpdate === null ? null : Math.max(0, measuredTime - Date.parse(lastCursorUpdate))
+      },
+      storage: {
+        databaseBytes: size(databasePath),
+        walBytes: size(`${databasePath}-wal`),
+        objects: objectStats.files,
+        objectBytes: objectStats.bytes,
+        totalBytes: size(databasePath) + size(`${databasePath}-wal`) + objectStats.bytes
+      }
+    };
+  }
+  health({ windowMinutes = 60, pendingAgeMinutes = 15, verify = true, measuredAt = now() } = {}) {
+    if (!Number.isSafeInteger(pendingAgeMinutes) || pendingAgeMinutes < 0 || pendingAgeMinutes > 10080) {
+      throw new Error("pendingAgeMinutes must be an integer between 0 and 10080");
+    }
+    if (typeof verify !== "boolean") throw new Error("verify must be a boolean");
+    const metrics = this.metrics({ windowMinutes, measuredAt });
+    const integrity = verify ? this.verifyAll() : null;
+    const alerts = [];
+    if (integrity && !integrity.valid) {
+      alerts.push({
+        code: "history_integrity_failed",
+        severity: "critical",
+        message: `History audit found ${integrity.issues.length} issue(s).`,
+        value: integrity.issues.length
+      });
+    }
+    const captureFailures = metrics.events.byType["capture.failed"] ?? 0;
+    if (captureFailures > 0) {
+      alerts.push({
+        code: "capture_failures",
+        severity: "critical",
+        message: `${captureFailures} capture failure event(s) occurred in the last ${windowMinutes} minute(s).`,
+        value: captureFailures,
+        windowMinutes
+      });
+    }
+    const blockedTasks = metrics.tasks.byStatus.blocked ?? 0;
+    if (blockedTasks > 0) {
+      alerts.push({
+        code: "blocked_tasks",
+        severity: "warning",
+        message: `${blockedTasks} task(s) are blocked.`,
+        value: blockedTasks
+      });
+    }
+    const pendingThresholdMs = pendingAgeMinutes * 6e4;
+    if (metrics.messages.oldestPendingAgeMs !== null && metrics.messages.oldestPendingAgeMs >= pendingThresholdMs) {
+      alerts.push({
+        code: "stale_pending_messages",
+        severity: "warning",
+        message: `The oldest pending message is at least ${pendingAgeMinutes} minute(s) old.`,
+        value: metrics.messages.oldestPendingAgeMs,
+        threshold: pendingThresholdMs
+      });
+    }
+    const status = alerts.some((alert) => alert.severity === "critical") ? "unhealthy" : alerts.length > 0 ? "degraded" : "healthy";
+    return { status, alerts, metrics, integrity };
+  }
   dashboardSummary() {
     const tasks = Object.fromEntries(this.database.prepare(`
       SELECT status, COUNT(*) AS count FROM tasks GROUP BY status
@@ -1833,6 +2005,32 @@ function registerTools(ctx, store, config) {
         eventId: args?.eventId ?? null,
         sequence: args?.sequence ?? null,
         taskId: args?.taskId ?? null
+      });
+    }
+  });
+  objectTool(ctx, {
+    name: "agentgit_get_metrics",
+    description: "Read event throughput, workflow latency, backlog age, ingest freshness, and local storage usage.",
+    parameters: {
+      windowMinutes: limitParameter("Metric window in minutes, from 1 through 10080.")
+    },
+    async execute(args) {
+      return store.metrics({ windowMinutes: args?.windowMinutes ?? 60 });
+    }
+  });
+  objectTool(ctx, {
+    name: "agentgit_health_check",
+    description: "Return local integrity, capture failure, blocked task, and stale pending-message alerts.",
+    parameters: {
+      windowMinutes: limitParameter("Alert window in minutes, from 1 through 10080."),
+      pendingAgeMinutes: { type: "integer", description: "Pending message age threshold in minutes, from 0 through 10080." },
+      verify: { type: "boolean", description: "Run the complete history integrity audit; defaults to true." }
+    },
+    async execute(args) {
+      return store.health({
+        windowMinutes: args?.windowMinutes ?? 60,
+        pendingAgeMinutes: args?.pendingAgeMinutes ?? 15,
+        verify: args?.verify ?? true
       });
     }
   });

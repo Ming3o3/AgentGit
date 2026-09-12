@@ -34,6 +34,8 @@ test('registers Harness tools and imports session events idempotently', async ()
     'agentgit_update_task',
     'agentgit_task_history',
     'agentgit_state_at',
+    'agentgit_get_metrics',
+    'agentgit_health_check',
     'agentgit_list_tasks',
     'agentgit_create_checkpoint',
     'agentgit_verify_history',
@@ -137,6 +139,18 @@ test('Harness reads historical task state without changing the projection', asyn
   await updateTask.execute({ taskId: created.task.id, assigneeId: 'coder' });
   const historical = JSON.parse(await stateAt.execute({ eventId: created.event.id, taskId: created.task.id }));
   assert.equal(historical.task.status, 'open');
+  for (const dispose of effects) dispose?.();
+});
+
+test('Harness exposes operational metrics and health checks', async () => {
+  const { tools, effects } = fixture();
+  const metricsTool = tools.find((tool) => tool.name === 'agentgit_get_metrics');
+  const healthTool = tools.find((tool) => tool.name === 'agentgit_health_check');
+  const metrics = JSON.parse(await metricsTool.execute({ windowMinutes: 60 }));
+  assert.equal(metrics.events.total, 0);
+  const health = JSON.parse(await healthTool.execute({ verify: false }));
+  assert.equal(health.status, 'healthy');
+  assert.equal(health.integrity, null);
   for (const dispose of effects) dispose?.();
 });
 

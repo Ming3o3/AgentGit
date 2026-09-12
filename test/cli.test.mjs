@@ -65,6 +65,21 @@ test('CLI audits the complete AgentGit history', () => {
   assert.equal(audit.checked.events, 1);
 });
 
+test('CLI provides help, compact metrics, and health exit status', () => {
+  assert.match(cli(['--help']), /Usage:/);
+  const repo = tempRepo();
+  cli(['init', repo]);
+  const compact = cli(['metrics', '--repo', repo, '--compact']).trim();
+  assert.equal(compact.includes('\n'), false);
+  assert.equal(JSON.parse(compact).events.total, 0);
+  assert.equal(JSON.parse(cli(['health', '--repo', repo])).status, 'healthy');
+
+  cli(['send', '--repo', repo, '--from', 'planner', '--to', 'coder', '--text', 'Waiting']);
+  const degraded = failingCli(['health', '--repo', repo, '--pending-age', '0', '--no-verify']);
+  assert.equal(degraded.status, 1);
+  assert.equal(JSON.parse(degraded.stdout).status, 'degraded');
+});
+
 test('CLI exports, backs up, imports, and reports schema status', () => {
   const source = tempRepo();
   cli(['init', source]);

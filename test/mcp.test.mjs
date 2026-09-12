@@ -26,7 +26,7 @@ test('exposes durable messaging through MCP stdio', async () => {
     await client.connect(transport);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name), [
-      'send_message', 'read_inbox', 'acknowledge_message', 'get_event', 'state_at', 'verify_history', 'rebuild_task_projection', 'task_history', 'create_checkpoint',
+      'send_message', 'read_inbox', 'acknowledge_message', 'get_event', 'state_at', 'get_metrics', 'health_check', 'verify_history', 'rebuild_task_projection', 'task_history', 'create_checkpoint',
       'create_task', 'assign_task', 'update_task_status', 'list_tasks',
     ]);
     const sent = await client.callTool({ name: 'send_message', arguments: { to: ['reviewer'], text: 'Please review checkpoint c1', task_id: 'task-1', references: ['checkpoint:c1'] } });
@@ -47,6 +47,10 @@ test('exposes durable messaging through MCP stdio', async () => {
     await client.callTool({ name: 'update_task_status', arguments: { task_id: task.id, status: 'in_progress' } });
     const historical = await client.callTool({ name: 'state_at', arguments: { event_id: created.event.id, task_id: task.id } });
     assert.equal(JSON.parse(historical.content[0].text).task.status, 'open');
+    const metrics = await client.callTool({ name: 'get_metrics', arguments: { window_minutes: 60 } });
+    assert.equal(JSON.parse(metrics.content[0].text).events.total >= 4, true);
+    const health = await client.callTool({ name: 'health_check', arguments: { verify: false } });
+    assert.equal(JSON.parse(health.content[0].text).integrity, null);
     const tasksResult = await client.callTool({ name: 'list_tasks', arguments: { status: 'in_progress' } });
     assert.equal(JSON.parse(tasksResult.content[0].text)[0].id, task.id);
     const rebuilt = await client.callTool({ name: 'rebuild_task_projection', arguments: {} });

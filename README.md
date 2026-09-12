@@ -79,7 +79,7 @@ The MCP tools are:
 
 - `read_inbox` and `acknowledge_message`
 - `send_message`
-- `get_event`, `state_at`, and `task_history`
+- `get_event`, `state_at`, `get_metrics`, `health_check`, and `task_history`
 - `create_task`, `assign_task`, `update_task_status`, and `list_tasks`
 - `create_checkpoint`
 - `verify_history` and `rebuild_task_projection`
@@ -120,7 +120,8 @@ same `repo` and `agentId` fields in the profile patch. The plugin exposes
 `agentgit_read_inbox`, `agentgit_send_message`, `agentgit_acknowledge_message`,
 `agentgit_create_task`, `agentgit_update_task`, `agentgit_task_history`, `agentgit_state_at`,
 `agentgit_list_tasks`, `agentgit_create_checkpoint`, `agentgit_verify_history`,
-and `agentgit_rebuild_task_projection`.
+`agentgit_rebuild_task_projection`, `agentgit_get_metrics`, and
+`agentgit_health_check`.
 Harness session events are imported idempotently by `(sessionId, event.seq)`;
 the original event payload remains in AgentGit's immutable event DAG.
 
@@ -320,6 +321,29 @@ Open the printed `http://127.0.0.1:3210` URL. The dashboard is local only and
 reads the existing AgentGit event store; it does not control the underlying
 agent or alter its prompt.
 
+## Metrics and local health alerts
+
+Inspect event throughput, workflow latency, backlog age, ingest freshness, and
+storage usage:
+
+```sh
+node src/cli.mjs metrics --repo /absolute/path/to/project --window 60
+```
+
+Run a local health check suitable for scripts and scheduled jobs:
+
+```sh
+node src/cli.mjs health --repo /absolute/path/to/project \
+  --window 60 --pending-age 15
+```
+
+Health status is `healthy`, `degraded`, or `unhealthy`; the CLI exits with 0,
+1, or 2 respectively. Alerts cover history integrity, recent capture failures,
+blocked tasks, and stale pending messages. `--no-verify` skips the full history
+audit when a lightweight poll is appropriate. MCP and Harness expose the same
+read-only data through `get_metrics`/`health_check` and their `agentgit_`
+variants.
+
 ## Checkpoints and Git
 
 Record the current Git state without creating a commit:
@@ -360,5 +384,5 @@ npm pack --dry-run
   merge source-code conflicts or competing task decisions for agents.
 - Task state and event-derived counts can be queried at any recorded local
   sequence. Worktree restoration is intentionally not automatic.
-- The dashboard reports operational counts and recent activity, not latency,
-  throughput, resource usage, or external notifications.
+- Metrics and alerts remain local and pull-based; AgentGit does not send email,
+  webhooks, or hosted-monitoring notifications.

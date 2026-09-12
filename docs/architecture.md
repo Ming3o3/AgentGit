@@ -145,3 +145,18 @@ Bundles are backup and portability artifacts, not a synchronization protocol.
 Import accepts an empty event store or an idempotent re-import of the exact same
 history. It rejects partial or unrelated destination histories instead of
 inventing merge semantics.
+
+## Observability model
+
+AgentGit derives local operational metrics from the event store instead of
+shipping telemetry to another service. Event counts provide throughput;
+delivery and task timestamps provide workflow latency; cursor timestamps
+provide ingest freshness; and filesystem metadata provides SQLite/WAL/object
+usage. The calculation is read-only and does not add monitoring events to the
+history it measures.
+
+Health checks combine these metrics with an optional full integrity audit.
+Warnings identify blocked tasks and stale pending messages. Recent
+`capture.failed` events and integrity failures are critical. Alerts are
+structured pull results for CLI/MCP/Harness consumers; AgentGit does not run a
+notification daemon.

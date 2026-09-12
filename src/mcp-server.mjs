@@ -85,6 +85,28 @@ server.registerTool('state_at', {
   annotations: { readOnlyHint: true },
 }, async ({ event_id: eventId = null, sequence = null, task_id: taskId = null }) => result(store.stateAt({ eventId, sequence, taskId })));
 
+server.registerTool('get_metrics', {
+  title: 'Read AgentGit operational metrics',
+  description: 'Read event throughput, workflow latency, backlog age, ingest freshness, and local storage usage.',
+  inputSchema: {
+    window_minutes: z.number().int().min(1).max(10080).optional(),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ window_minutes: windowMinutes = 60 }) => result(store.metrics({ windowMinutes })));
+
+server.registerTool('health_check', {
+  title: 'Check AgentGit health',
+  description: 'Return local integrity, capture failure, blocked task, and stale pending-message alerts.',
+  inputSchema: {
+    window_minutes: z.number().int().min(1).max(10080).optional(),
+    pending_age_minutes: z.number().int().min(0).max(10080).optional(),
+    verify: z.boolean().optional().describe('Run the complete history integrity audit; defaults to true'),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ window_minutes: windowMinutes = 60, pending_age_minutes: pendingAgeMinutes = 15, verify = true }) => result(store.health({
+  windowMinutes, pendingAgeMinutes, verify,
+})));
+
 server.registerTool('verify_history', {
   title: 'Verify AgentGit history',
   description: 'Read-only audit of the local event DAG, hashes, refs, deliveries, objects, and task projection.',

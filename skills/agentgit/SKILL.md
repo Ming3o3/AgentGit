@@ -13,4 +13,6 @@ Use `create_checkpoint` after a meaningful work stage. Set `commit` only when th
 
 Use `state_at` when a task needs the event-derived task state and counts that existed at a specific event or local sequence. Treat it as a read-only historical query; it does not restore Git or historical message-delivery state.
 
+Use `health_check` before relying on a store after a failure or when workflow progress appears stale. Use `get_metrics` for local throughput, latency, ingest freshness, and storage evidence; neither tool sends external telemetry.
+
 Do not try to infer other agents' hidden reasoning. Use the observable event history, messages, tool outcomes, and Git checkpoint references.

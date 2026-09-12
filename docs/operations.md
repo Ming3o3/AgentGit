@@ -131,6 +131,31 @@ agentgit watch-codex --repo /absolute/path/to/project \
 | Dashboard port already in use | Select another `--port`; the event store remains usable |
 | Harness `capture.failed` event | Inspect the event's redacted error and source, correct the integration, then verify history |
 
+## Monitoring and exit codes
+
+Use `metrics` for trends and `health` for actionable state:
+
+```sh
+agentgit metrics --repo /absolute/path/to/project --window 60
+agentgit health --repo /absolute/path/to/project --window 60 --pending-age 15
+```
+
+Health exit codes are stable for shell automation:
+
+| Exit | Status | Meaning |
+| --- | --- | --- |
+| 0 | `healthy` | No configured condition is active |
+| 1 | `degraded` | One or more warning conditions are active |
+| 2 | `unhealthy` | A capture or integrity failure is active |
+
+The default health check audits the full immutable history and every referenced
+object. For frequent lightweight polling, `--no-verify` keeps workflow alerts
+but returns `integrity: null`. Schedule a separate verified check so integrity
+coverage is not lost.
+
+AgentGit does not deliver external notifications. A local scheduler can inspect
+the exit code and route the JSON report to an existing monitoring system.
+
 ## Security notes
 
 - Keep the dashboard on `127.0.0.1`; it has no authentication or TLS.

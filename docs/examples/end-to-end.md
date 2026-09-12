@@ -141,6 +141,8 @@ and ref heads without changing task, message, event, or Git state. Note that
 ```sh
 agentgit backup --repo "$PROJECT" --file /secure/path/login-history.json
 agentgit schema-status --repo "$PROJECT"
+agentgit metrics --repo "$PROJECT" --window 60
+agentgit health --repo "$PROJECT" --pending-age 15
 ```
 
 Test the backup in a disposable empty project before relying on it:

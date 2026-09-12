@@ -46,6 +46,8 @@ Inbox events add a `delivery` object with `eventId`, `recipientId`, `status`,
 All successful data commands write formatted JSON to stdout. Diagnostics go to
 stderr. Invalid input and a failed integrity audit set a nonzero exit status.
 Unless stated otherwise, `--repo` is required and limits default to 100.
+`--compact` prints JSON on one line. `agentgit --help`, `agentgit help`, and a
+command followed by `--help` print usage and exit successfully.
 
 | Command | Required arguments | Optional arguments | Result or effect |
 | --- | --- | --- | --- |
@@ -69,6 +71,8 @@ Unless stated otherwise, `--repo` is required and limits default to 100.
 | `task-status` | `--repo`, `--agent`, `--task`, `--status` | `--summary` | Return `{ event, task }` |
 | `tasks` | `--repo` | `--agent` (assignee), `--status`, `--limit` | Return current task projections |
 | `rebuild-tasks` | `--repo` | none | Atomically rebuild tasks; return `{ events }` |
+| `metrics` | `--repo` | `--window` 1-10080 minutes | Return local event, workflow, ingest, and storage metrics |
+| `health` | `--repo` | `--window`, `--pending-age` 0-10080 minutes, `--no-verify` | Return alerts; exit 0 healthy, 1 degraded, or 2 unhealthy |
 | `checkpoint` | `--repo`, `--agent`, `--summary` | `--task`, `--session`, `--ref`, `--commit` | Optionally commit Git, store the diff object, and return the checkpoint event |
 | `codex-config` | `--repo`, `--agent` | none | Print a project-scoped TOML MCP configuration block |
 | `serve` | `--repo` | `--host` (default `127.0.0.1`), `--port` (default `3210`) | Run the dashboard until SIGINT or SIGTERM |
@@ -90,6 +94,8 @@ formatted JSON. Protocol/schema errors and store errors are MCP tool errors.
 | `acknowledge_message` | `event_id` | Delivery; repeated calls remain acknowledged |
 | `get_event` | `event_id` | Event; missing IDs return an MCP error result |
 | `state_at` | exactly one of `event_id`, `sequence`; optional nullable `task_id` | Historical boundary, event/task counts, and task projection(s); read-only |
+| `get_metrics` | optional `window_minutes` 1-10080 | Operational metrics; read-only |
+| `health_check` | optional `window_minutes`, `pending_age_minutes` 0-10080, `verify` | Health status, alerts, metrics, and optional integrity audit; read-only |
 | `task_history` | `task_id`; optional `limit` 1-1000 | Chronological task events |
 | `create_task` | `title`; optional `description`, `priority` | `{ event, task }` |
 | `assign_task` | `task_id`, `assignee_id`; optional nullable `note` | `{ event, task }` |
@@ -108,6 +114,26 @@ parameter names are camelCase: for example `taskId`, `assigneeId`, and
 and/or `status`; at least one is required. Harness query limits are 1-10000.
 `agentgit_state_at` accepts exactly one of `eventId` and `sequence`, plus an
 optional `taskId`.
+`agentgit_get_metrics` and `agentgit_health_check` use camelCase
+`windowMinutes`, `pendingAgeMinutes`, and `verify` parameters.
+
+### Metrics and health responses
+
+Metrics contain:
+
+| Group | Fields |
+| --- | --- |
+| `events` | Total and in-window counts, per-minute rate, counts by type |
+| `messages` | Message-event and delivery counts, status counts, oldest pending age, delivery and acknowledgement latency summaries |
+| `tasks` | Counts by status and completion-duration summary |
+| `ingest` | Source count and most recent cursor update/age |
+| `storage` | SQLite, WAL, object count/bytes, and combined bytes |
+
+Latency summaries provide `samples`, `averageMs`, `p95Ms`, and `maximumMs`.
+Health adds `status`, structured `alerts`, the metrics snapshot, and either a
+full `integrity` audit or `null` when verification was disabled. Alert codes
+are `history_integrity_failed`, `capture_failures`, `blocked_tasks`, and
+`stale_pending_messages`.
 
 ### Historical state response
 
