@@ -59,7 +59,9 @@ dsh plugin --profile agentgit-dev add /absolute/path/to/dsh-agentgit
 ## Web UI 历史面板
 
 安装到带 Web UI 的 Harness profile 后，侧边栏底部会出现 `AgentGit` 按钮。
-点击后打开独立的历史浮层，展示概览、任务、最近事件和 refs/checkpoints。
+点击后打开独立的历史浮层，展示概览、任务、最近事件、refs/checkpoints、
+性能指标和健康告警。事件列表支持按 ID、类型、Agent 或任务搜索；点击事件可查看
+payload 以及 parents、causation、children 和 effects 关系摘要。
 面板只通过插件自己的 `GET /agentgit/api` 读取 AgentGit 投影数据，每 2 秒刷新一次；
 不会改变 Harness 原有的对话、工具调用或会话流程。
 

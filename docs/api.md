@@ -172,19 +172,31 @@ Plugin configuration:
 
 ## Dashboard HTTP API
 
-The standalone dashboard exposes one endpoint:
+The standalone dashboard exposes two endpoints:
 
 ```http
 GET /api/overview
+GET /api/events/:eventId/context
 ```
 
-It returns `{ repo, generatedAt, summary, tasks, events, refs }`. `summary`
-contains counts grouped by task and delivery status plus total distinct agents
-and events. The endpoint is read-only, uncached, unauthenticated, and intended
-for loopback access. Other methods return 405 and unknown paths return 404.
+`/api/overview` returns
+`{ repo, generatedAt, summary, metrics, health, tasks, events, refs }`.
+`summary` contains counts grouped by task and delivery status plus total
+distinct agents and events. `metrics` is the same operational snapshot exposed
+by `metrics`; `health` contains the lightweight status and alerts without a
+full integrity audit.
+
+`/api/events/:eventId/context` returns
+`{ event, parents, causation, children, effects }`. `causation` is either one
+event or `null`; all other relationship fields are arrays. An unknown event
+returns 404. Both endpoints are read-only, uncached, unauthenticated, and
+intended for loopback access. Other methods return 405 and unknown paths return
+404.
 
 The Harness plugin exposes a similar bounded read model at
-`GET /agentgit/api`; it accepts an optional `limit` query parameter.
+`GET /agentgit/api`; it accepts an optional `limit` query parameter. Pass
+`eventId` instead to return the same event context shape, for example
+`GET /agentgit/api?eventId=evt_...`.
 
 ## Error contract
 

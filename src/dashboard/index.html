@@ -14,6 +14,7 @@
           <p class="project-path" id="project-path">Loading project...</p>
         </div>
         <div class="topbar-actions">
+          <span class="health-status health-unknown" id="health-status">Checking</span>
           <time id="updated-at"></time>
           <button type="button" id="refresh">Refresh</button>
         </div>
@@ -24,6 +25,15 @@
           <div><span id="agent-count">0</span><small>Agents</small></div>
           <div><span id="pending-count">0</span><small>Pending messages</small></div>
           <div><span id="active-count">0</span><small>Active tasks</small></div>
+        </section>
+        <section class="alert-band" id="alert-band" aria-live="polite" hidden>
+          <ul id="alerts"></ul>
+        </section>
+        <section class="metrics-strip" aria-label="Operational metrics">
+          <div><span id="event-rate">0</span><small>Events / minute</small></div>
+          <div><span id="delivery-p95">-</span><small>Delivery p95</small></div>
+          <div><span id="completion-p95">-</span><small>Completion p95</small></div>
+          <div><span id="storage-size">0 B</span><small>Local storage</small></div>
         </section>
         <div class="workspace-grid">
           <section class="task-section" aria-labelledby="task-heading">
@@ -43,6 +53,11 @@
               <h2 id="timeline-heading">Activity</h2>
               <span id="event-total"></span>
             </div>
+            <div class="event-filters">
+              <input id="event-search" type="search" placeholder="Search events" aria-label="Search events">
+              <select id="agent-filter" aria-label="Filter by agent"><option value="">All agents</option></select>
+              <select id="type-filter" aria-label="Filter by event type"><option value="">All types</option></select>
+            </div>
             <ol class="timeline" id="timeline"></ol>
           </section>
           <aside class="refs-section" aria-labelledby="refs-heading">
@@ -51,6 +66,17 @@
           </aside>
         </div>
       </main>
+    </div>
+    <div class="event-dialog-backdrop" id="event-dialog" hidden>
+      <section class="event-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <header>
+          <div><p class="dialog-label">Event context</p><h2 id="dialog-title">Event</h2></div>
+          <button type="button" class="dialog-close" id="dialog-close" aria-label="Close event details" title="Close">&times;</button>
+        </header>
+        <dl class="event-properties" id="event-properties"></dl>
+        <section class="relationship-grid" id="event-relationships"></section>
+        <section class="payload-section"><h3>Payload</h3><pre id="event-payload"></pre></section>
+      </section>
     </div>
     <script type="module" src="/assets/dashboard.js"></script>
   </body>

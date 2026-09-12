@@ -311,7 +311,8 @@ node src/cli.mjs schema-status --repo /absolute/path/to/project
 ## Local Dashboard
 
 AgentGit includes a local, read-only operational dashboard for task state,
-event activity, message delivery counts, and branch refs:
+searchable event activity, message delivery counts, branch refs, performance
+metrics, and health alerts:
 
 ```sh
 node src/cli.mjs serve --repo /absolute/path/to/project --port 3210
@@ -319,7 +320,9 @@ node src/cli.mjs serve --repo /absolute/path/to/project --port 3210
 
 Open the printed `http://127.0.0.1:3210` URL. The dashboard is local only and
 reads the existing AgentGit event store; it does not control the underlying
-agent or alter its prompt.
+agent or alter its prompt. Select an event to inspect its payload and navigate
+its parent, causation, child, and effect relationships. The activity view can
+also be filtered by text, agent, or event type.
 
 ## Metrics and local health alerts
 

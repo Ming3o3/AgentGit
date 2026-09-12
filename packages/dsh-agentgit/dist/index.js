@@ -1175,6 +1175,25 @@ var EventStore = class {
       ORDER BY event_order.sequence DESC LIMIT ?
     `).all(limit).map((item) => this.#hydrate(item));
   }
+  eventContext(eventId) {
+    if (typeof eventId !== "string" || !eventId) throw new Error("eventId is required");
+    const event = this.get(eventId);
+    if (!event) return null;
+    const readEvents = (sql, ...values) => this.database.prepare(sql).all(...values).map((row) => this.#hydrate(row));
+    const parents = event.parents.map((parentId) => this.get(parentId)).filter(Boolean);
+    const causation = event.causationId ? this.get(event.causationId) : null;
+    const children = readEvents(`
+      SELECT DISTINCT events.* FROM events
+      JOIN event_order ON event_order.event_id = events.id
+      JOIN json_each(events.parents_json) ON TRUE
+      WHERE json_each.value = ? ORDER BY event_order.sequence ASC
+    `, eventId);
+    const effects = readEvents(`
+      SELECT events.* FROM events JOIN event_order ON event_order.event_id = events.id
+      WHERE events.causation_id = ? ORDER BY event_order.sequence ASC
+    `, eventId);
+    return { event, parents, causation, children, effects };
+  }
   stateAt({ eventId = null, sequence = null, taskId = null } = {}) {
     const hasEvent = typeof eventId === "string" && eventId.length > 0;
     const hasSequence = sequence !== null && sequence !== void 0;
@@ -1780,9 +1799,12 @@ function eventView(event) {
 }
 function dashboardData(store, query = {}) {
   const limit = boundedLimit(query.limit);
+  const health = store.health({ verify: false });
   return {
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     summary: store.dashboardSummary(),
+    metrics: health.metrics,
+    health: { status: health.status, alerts: health.alerts },
     tasks: store.listTasks({ limit }),
     events: store.recentEvents({ limit }).map(eventView),
     refs: store.refs()
@@ -1797,6 +1819,12 @@ function createAgentGitApiHandler(store) {
     }
     try {
       const url = new URL2(req.url ?? "/agentgit/api", "http://agentgit.local");
+      const eventId = url.searchParams.get("eventId");
+      if (eventId) {
+        const context = store.eventContext(eventId);
+        json(res, context ? 200 : 404, context ?? { error: "event_not_found" });
+        return;
+      }
       json(res, 200, dashboardData(store, { limit: url.searchParams.get("limit") }));
     } catch (error) {
       json(res, 500, { error: "agentgit_api_failed", message: error instanceof Error ? error.message : String(error) });

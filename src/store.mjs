@@ -1102,6 +1102,26 @@ export class EventStore {
       .all(limit).map((item) => this.#hydrate(item));
   }
 
+  eventContext(eventId) {
+    if (typeof eventId !== 'string' || !eventId) throw new Error('eventId is required');
+    const event = this.get(eventId);
+    if (!event) return null;
+    const readEvents = (sql, ...values) => this.database.prepare(sql).all(...values).map((row) => this.#hydrate(row));
+    const parents = event.parents.map((parentId) => this.get(parentId)).filter(Boolean);
+    const causation = event.causationId ? this.get(event.causationId) : null;
+    const children = readEvents(`
+      SELECT DISTINCT events.* FROM events
+      JOIN event_order ON event_order.event_id = events.id
+      JOIN json_each(events.parents_json) ON TRUE
+      WHERE json_each.value = ? ORDER BY event_order.sequence ASC
+    `, eventId);
+    const effects = readEvents(`
+      SELECT events.* FROM events JOIN event_order ON event_order.event_id = events.id
+      WHERE events.causation_id = ? ORDER BY event_order.sequence ASC
+    `, eventId);
+    return { event, parents, causation, children, effects };
+  }
+
   stateAt({ eventId = null, sequence = null, taskId = null } = {}) {
     const hasEvent = typeof eventId === 'string' && eventId.length > 0;
     const hasSequence = sequence !== null && sequence !== undefined;

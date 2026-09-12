@@ -30,14 +30,25 @@ export function createDashboardServer({ repo }) {
       const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
       if (request.method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' });
       if (requestUrl.pathname === '/api/overview') {
+        const health = store.health({ verify: false });
         return sendJson(response, 200, {
           repo: initialized.repo,
           generatedAt: new Date().toISOString(),
           summary: store.dashboardSummary(),
+          metrics: health.metrics,
+          health: { status: health.status, alerts: health.alerts },
           tasks: store.listTasks({ limit: 500 }),
           events: store.recentEvents({ limit: 300 }),
           refs: store.refs(),
         });
+      }
+      const contextMatch = requestUrl.pathname.match(/^\/api\/events\/([^/]+)\/context$/u);
+      if (contextMatch) {
+        const eventId = decodeURIComponent(contextMatch[1]);
+        const context = store.eventContext(eventId);
+        return context
+          ? sendJson(response, 200, context)
+          : sendJson(response, 404, { error: 'event not found' });
       }
       const asset = STATIC_FILES[requestUrl.pathname];
       if (asset) return sendStatic(response, ...asset);

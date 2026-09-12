@@ -38,9 +38,12 @@ function eventView(event) {
 /** Build the read-only projection consumed by the Web UI. */
 export function dashboardData(store, query = {}) {
   const limit = boundedLimit(query.limit);
+  const health = store.health({ verify: false });
   return {
     generatedAt: new Date().toISOString(),
     summary: store.dashboardSummary(),
+    metrics: health.metrics,
+    health: { status: health.status, alerts: health.alerts },
     tasks: store.listTasks({ limit }),
     events: store.recentEvents({ limit }).map(eventView),
     refs: store.refs(),
@@ -57,6 +60,12 @@ export function createAgentGitApiHandler(store) {
     }
     try {
       const url = new URL(req.url ?? '/agentgit/api', 'http://agentgit.local');
+      const eventId = url.searchParams.get('eventId');
+      if (eventId) {
+        const context = store.eventContext(eventId);
+        json(res, context ? 200 : 404, context ?? { error: 'event_not_found' });
+        return;
+      }
       json(res, 200, dashboardData(store, { limit: url.searchParams.get('limit') }));
     } catch (error) {
       json(res, 500, { error: 'agentgit_api_failed', message: error instanceof Error ? error.message : String(error) });
